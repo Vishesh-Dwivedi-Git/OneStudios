@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #ffffff; /* Pure white */
+  --foreground: #333333; /* Soft black for text */
+  --primary: #a8e6cf; /* Soft green */
+  --primary-foreground: #333333; /* Ensure contrast on green */
+  --secondary: #e0e0e0; /* Very light gray (dividers, disabled) */
+  --secondary-foreground: #333333;
+
+  /* Map existing tokens to the palette to avoid introducing new colors */
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --muted-foreground: color-mix(in oklab, var(--foreground) 70%, transparent);
+  --accent: var(--secondary);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--foreground); /* constrained to palette */
+  --destructive-foreground: var(--background);
+  --border: var(--secondary);
+  --input: var(--secondary);
+  --ring: var(--primary);
+
+  /* Charts constrained to our palette */
+  --chart-1: var(--primary);
+  --chart-2: var(--foreground);
+  --chart-3: var(--secondary);
+  --chart-4: var(--primary);
+  --chart-5: var(--foreground);
+
+  /* Radius: 14px within the 12–16px mandate */
+  --radius: 0.875rem;
+
+  /* Sidebar tokens mapped to palette */
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--secondary);
+  --sidebar-ring: var(--primary);
+
+  /* Brand gradient stops (same hue family, no new colors) */
+  --primary-500: #a8e6cf;
+  --primary-400: #bff0de;
+
+  /* Soft shadow for floating elements */
+  --shadow-soft: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+/* Dark mode constrained to palette: invert background/foreground; keep primary/secondary */
+.dark {
+  --background: #1f1f1f; /* near soft-black */
+  --foreground: #f9f9f9; /* off-white as text */
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --popover: var(--background);
+  --popover-foreground: var(--foreground);
+  --primary: #a8e6cf;
+  --primary-foreground: #1f1f1f;
+  --secondary: #2a2a2a; /* darker neutral, still same family */
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --muted-foreground: color-mix(in oklab, var(--foreground) 70%, transparent);
+  --accent: var(--secondary);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--foreground);
+  --destructive-foreground: var(--background);
+  --border: #2a2a2a; /* ensure visible borders in dark */
+  --input: var(--secondary);
+  --ring: var(--primary);
+
+  --chart-1: var(--primary);
+  --chart-2: var(--foreground);
+  --chart-3: var(--secondary);
+  --chart-4: var(--primary);
+  --chart-5: var(--foreground);
+
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--secondary);
+  --sidebar-ring: var(--primary);
+}
+
+@theme inline {
+  /* update font tokens to our new variables */
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-body); /* keep to 2 total fonts */
+  /* semantic colors */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  /* radius scale */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* sidebar mapping */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* headings use Inter with bold weights for hierarchy */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading), ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+}
+
+@layer utilities {
+  /* soft floating shadow utility */
+  .shadow-soft {
+    box-shadow: var(--shadow-soft);
+  }
+}
