@@ -1,0 +1,19 @@
+
+  // Visit https://aka.ms/tsconfig to read more about this file
+ {
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2023",
+
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true
+  },
+
+  "include": ["src/**/*"]
+}

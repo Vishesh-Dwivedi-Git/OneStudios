@@ -5,12 +5,52 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
+
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+
+model User {
+  id        String  @id @default(uuid())
+  username  String  @unique
+  email     String  @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  roomsHosted Room[]             @relation("RoomHost")
+  participations RoomParticipant[]
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  type      RoomType
+  createdAt DateTime @default(now())
+
+  hostId String
+  host   User @relation("RoomHost", fields: [hostId], references: [id])
+
+  participants RoomParticipant[]
+}
+
+model RoomParticipant {
+  id        String   @id @default(uuid())
+  joinedAt  DateTime @default(now())
+  leftAt    DateTime?
+
+  role   RoomRole
+
+  userId String
+  roomId String
+
+  user User @relation(fields: [userId], references: [id])
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@index([roomId])
+  @@index([userId])
 }
 
 enum RoomType {
@@ -23,47 +63,4 @@ enum RoomRole {
   HOST
   SPEAKER
   VIEWER
-}
-
-model User {
-  id        String      @id @default(uuid())
-  email     String   @unique
-  name      String?
-  password  String 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-   //relations
-  // relations
-  roomsCreated     Room[]            @relation("RoomHost")
-  roomParticipants RoomParticipant[]
-}
-
-model Room {
-  id        String    @id @default(uuid())
-  type      RoomType
-  createdAt DateTime  @default(now())
-
-   //relations
-  hostId   String
-  host     User      @relation("RoomHost", fields: [hostId], references: [id])
-
-  participants RoomParticipant[]
-}
-
-model RoomParticipant{
-  id        String   @id @default(uuid())
-  joinedAt  DateTime @default(now())
-  leftAt    DateTime?
-  
-    // relations
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  roomId String
-  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
-
-  role RoomRole
-
-  @@unique([userId, roomId])
 }
