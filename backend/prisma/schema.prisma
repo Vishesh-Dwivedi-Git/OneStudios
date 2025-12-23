@@ -21,8 +21,19 @@ model User {
   password  String
   createdAt DateTime @default(now())
 
+
+  refreshTokens RefreshToken[]
   roomsHosted Room[]             @relation("RoomHost")
   participations RoomParticipant[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
 
 model Room {

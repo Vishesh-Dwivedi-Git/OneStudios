@@ -1,45 +1,113 @@
-import "dotenv/config";
-import { prisma } from "../lib/prisma.js";
+import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import type { Request, Response } from "express";
+import { prisma } from "../lib/prisma.js";
+import { hashToken } from "../lib/hash.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../lib/jwt.js";
+import { setAuthCookies } from "../lib/cookies.js";
 
-const JWT_SECRET: string = process.env.JWT_SECRET as string; // later move to env
-
+/* REGISTER */
 export const register = async (req: Request, res: Response) => {
-  const { email, name, password } = req.body;
+  const { email, username, password } = req.body;
 
-  const hashed = await bcrypt.hash(password, 10);
-  console.log("Registering user:", email);
-try {
+  const hashedPassword = await bcrypt.hash(password, 10);
+
   const user = await prisma.user.create({
-    data: {
-      username: name,
-      email,
-      password: hashed
-    }
+    data: { email, username, password: hashedPassword },
   });
-  console.log("User created with ID:", user.id);
-}
 
-catch (err) {
-   return res.status(500).json({ error: err});
-  } 
-  
-return res.json({ message: "User created" });
-  
+  const accessToken = generateAccessToken(user.id);
+  const refreshToken = generateRefreshToken(user.id);
+
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: hashToken(refreshToken),
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 7 * 86400000),
+    },
+  });
+
+  setAuthCookies(res, accessToken, refreshToken);
+  res.status(201).json({ success: true });
 };
 
+/* LOGIN */
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return res.status(401).json({ error: "Invalid creds" });
+  if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(401).json({ error: "Invalid creds" });
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) return res.status(401).json({ message: "Invalid credentials" });
 
-  const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+  const accessToken = generateAccessToken(user.id);
+  const refreshToken = generateRefreshToken(user.id);
 
-  return res.json({ token });
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: hashToken(refreshToken),
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 7 * 86400000),
+    },
+  });
+
+  setAuthCookies(res, accessToken, refreshToken);
+  res.json({ success: true });
+};
+
+/* REFRESH */
+export const refresh = async (req: Request, res: Response) => {
+  const token = req.cookies.refreshToken;
+  if (!token) return res.status(401).json({ message: "No refresh token" });
+
+  const tokenHash = hashToken(token);
+
+  const stored = await prisma.refreshToken.findUnique({
+    where: { tokenHash },
+  });
+
+  if (!stored)
+    return res.status(403).json({ message: "Token revoked" });
+
+  try {
+    jwt.verify(token, process.env.REFRESH_TOKEN_SECRET!);
+  } catch {
+    return res.status(403).json({ message: "Invalid refresh token" });
+  }
+
+  // rotate
+  await prisma.refreshToken.delete({ where: { id: stored.id } });
+
+  const newAccessToken = generateAccessToken(stored.userId);
+  const newRefreshToken = generateRefreshToken(stored.userId);
+
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: hashToken(newRefreshToken),
+      userId: stored.userId,
+      expiresAt: new Date(Date.now() + 7 * 86400000),
+    },
+  });
+
+  setAuthCookies(res, newAccessToken, newRefreshToken);
+  res.json({ success: true });
+};
+
+/* LOGOUT */
+export const logout = async (req: Request, res: Response) => {
+  const token = req.cookies.refreshToken;
+
+  if (token) {
+    await prisma.refreshToken.deleteMany({
+      where: { tokenHash: hashToken(token) },
+    });
+  }
+
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken");
+  res.json({ success: true });
 };

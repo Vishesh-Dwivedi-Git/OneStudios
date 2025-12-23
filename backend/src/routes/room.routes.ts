@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { createRoom, getRoom } from "../controllers/room.controller.js";
-import { authMiddleware } from "../middleware/auth.middleware.js";
+import {  protect } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
-router.post("/createRoom", authMiddleware, createRoom);
-router.get("/getRoom/:id", authMiddleware, getRoom);
+router.post("/createRoom", protect, createRoom);
+router.get("/getRoom/:id", protect, getRoom);
 
 export default router;
