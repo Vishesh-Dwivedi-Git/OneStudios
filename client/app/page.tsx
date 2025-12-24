@@ -3,7 +3,7 @@ import Image from "next/image";
 export default function Home() {
   return (
     <div >
-      hi i m vishesh , Google 
+      hi i m vishesh
     </div>
   );
 }

@@ -14,11 +14,11 @@ passport.use(
       try {
         const email = profile.emails?.[0]?.value;
         if (!email) return done(new Error("Email not provided"), false);
-
+        console.log("Google profile email:", email);
         let user = await prisma.user.findUnique({
           where: { email },
         });
-
+        console.log("Found user:", user);
         if (!user) {
           user = await prisma.user.create({
             data: {
