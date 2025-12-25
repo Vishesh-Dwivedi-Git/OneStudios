@@ -37,6 +37,9 @@ export const getRoom = async (req: Request, res: Response) => {
       }
     }
   });
-
-  return res.json(room);
 };
+
+export const joinRoom = async (req: Request, res: Response) => {
+  const userId = (req as any).userId;
+  return res.json({ message: `User ${userId} joined room ${req.params.id}` });
+}
