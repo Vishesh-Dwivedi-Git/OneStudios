@@ -38,7 +38,6 @@ model RefreshToken {
 
 model Room {
   id        String   @id @default(uuid())
-  type      RoomType
   createdAt DateTime @default(now())
 
   hostId String
@@ -64,14 +63,7 @@ model RoomParticipant {
   @@index([userId])
 }
 
-enum RoomType {
-  P2P
-  GROUP
-  BROADCAST
-}
-
 enum RoomRole {
   HOST
-  SPEAKER
-  VIEWER
+  PARTICIPANT
 }
