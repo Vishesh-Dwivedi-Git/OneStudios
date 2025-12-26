@@ -5,7 +5,6 @@ export const createRoom = async (req: Request, res: Response) => {
   const userId = (req as any).userId;
   const { type } = req.body;
   console.log("Creating room for user:", userId);
-
   try{
      const room = await prisma.room.create({
     data: {
@@ -14,7 +13,7 @@ export const createRoom = async (req: Request, res: Response) => {
       participants: {
         create: {
           userId,
-          role: "HOST"
+          role: "HOST" as const
         }
       }
     }
@@ -41,5 +40,49 @@ export const getRoom = async (req: Request, res: Response) => {
 
 export const joinRoom = async (req: Request, res: Response) => {
   const userId = (req as any).userId;
+  const roomId = req.params.id;
+
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+  });
+
+  if (!room) {
+    return res.status(404).json({ message: "Room does not exist" });
+  }
+
+  await prisma.roomParticipant.create({
+    data: {
+      roomId,
+      userId,
+      role: "PARTICIPANT" as const,
+      joinedAt: new Date(),
+    }
+  });
+
   return res.json({ message: `User ${userId} joined room ${req.params.id}` });
+}
+
+export const leaveRoom = async (req: Request, res: Response) => {
+  const userId = (req as any).userId;
+  const roomId = req.params.id;
+
+  //check if the user is in the room 
+  const participant = await prisma.roomParticipant.findFirst({
+    where: {
+      roomId,
+      userId
+    }
+  });
+
+  if (!participant) {
+    return res.status(400).json({ message: "User is not in the room" });
+  }
+
+  await prisma.roomParticipant.delete({
+    where: {
+      id: participant.id
+    }
+  });
+
+  return res.json({ message: `User ${userId} left room ${req.params.id}` });
 }
