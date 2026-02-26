@@ -7,6 +7,7 @@ export type ConnContext = {
 	ws: WebSocket;
 	peerId: string;
 	userId: string;
+	username: string | null;
 	roomId: string | null;
 	role: "HOST" | "CO_HOST" | "PARTICIPANT" | "VIEWER" | null;
 };
@@ -24,7 +25,7 @@ export function createRouter(wss: WebSocketServer) {
 			return;
 		}
 
-		const ctx: ConnContext = { ws, peerId, userId, roomId: null, role: null };
+		const ctx: ConnContext = { ws, peerId, userId, username: null, roomId: null, role: null };
 
 		ws.on("message", async (data: Buffer) => {
 			try {

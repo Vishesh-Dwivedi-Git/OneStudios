@@ -44,4 +44,11 @@ router.get("/me", protect, (req, res) => {
   res.json({ userId: req.userId });
 });
 
+// Returns the access token so the client can use it for WebSocket auth
+// (cookies are httpOnly and can't be read by JS for cross-origin WS)
+router.get("/ws-token", protect, (req, res) => {
+  const token = req.cookies.accessToken;
+  res.json({ token });
+});
+
 export default router;

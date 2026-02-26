@@ -74,7 +74,7 @@
 
 /* Glassmorphism primitives */
 .glass {
-    @apply bg-white/40 dark:bg-white/10 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-soft transition-all duration-300;
+    @apply bg-background/60 backdrop-blur-xl border border-border shadow-soft transition-all duration-300;
 }
 
 .glass-dark {
@@ -82,7 +82,7 @@
 }
 
 .glass-light {
-    @apply bg-white/80 backdrop-blur-md border border-black/5 shadow-soft transition-all duration-300;
+    @apply bg-background/80 backdrop-blur-xl border border-border shadow-sm transition-all duration-300;
 }
 
 .glass-tile {
@@ -90,7 +90,8 @@
 }
 
 .glass-tile:hover {
-    @apply bg-white/10 dark:bg-white/10 border-black/10 dark:border-white/20 scale-[1.02];
+    @apply bg-white/10 dark:bg-white/10 border-black/10 dark:border-white/20;
+    transform: scale(1.02);
 }
 
 @utility video-container {
@@ -98,10 +99,43 @@
 }
 
 @utility video-label {
-    @apply absolute bottom-4 left-4 px-3 py-1 rounded-md text-xs font-medium glass;
+    @apply absolute bottom-4 left-4 px-3 py-1 rounded-md text-xs font-medium bg-background/60 backdrop-blur-xl border border-border shadow-soft;
 }
 
 /* ─── Call Background Themes ─────────────────────────── */
+
+/* Default - Matches Landing Page Blobs */
+.call-theme-default {
+    background-color: var(--background);
+    position: relative;
+    overflow: hidden;
+}
+
+.call-theme-default::before,
+.call-theme-default::after {
+    content: "";
+    position: absolute;
+    width: 40%;
+    height: 40%;
+    border-radius: 9999px;
+    filter: blur(120px);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.call-theme-default::before {
+    top: -10%;
+    left: -10%;
+    background-color: var(--primary);
+    opacity: 0.1;
+}
+
+.call-theme-default::after {
+    bottom: -10%;
+    right: -10%;
+    background-color: var(--primary);
+    opacity: 0.05;
+}
 
 /* Midnight Blue — deep indigo → purple gradient with stars */
 .call-theme-midnight {
@@ -299,6 +333,7 @@
 }
 
 /* Ensure call content sits above theme pseudo-elements */
+.call-theme-default>*,
 .call-theme-midnight>*,
 .call-theme-aurora>*,
 .call-theme-sunset>*,

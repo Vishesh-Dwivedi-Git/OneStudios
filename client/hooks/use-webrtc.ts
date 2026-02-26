@@ -24,27 +24,49 @@ export function useWebRTC(roomId: string) {
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
     const [isScreenSharing, setIsScreenSharing] = useState(false);
+    const [remoteIsScreenSharing, setRemoteIsScreenSharing] = useState(false);
+    const [remoteIsAudioMuted, setRemoteIsAudioMuted] = useState(false);
+    const [remoteIsVideoOff, setRemoteIsVideoOff] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [chatMessages, setChatMessages] = useState<{ id: string; sender: string; text: string; timestamp: number; isLocal?: boolean }[]>([]);
+    const [remoteRecording, setRemoteRecording] = useState<{ isRecording: boolean; recorder: string } | null>(null);
 
     // All mutable state lives in refs to avoid dependency cycles
     const socketRef = useRef<WebSocket | null>(null);
     const pcRef = useRef<RTCPeerConnection | null>(null);
     const localStreamRef = useRef<MediaStream | null>(null);
     const screenTrackRef = useRef<MediaStreamTrack | null>(null);
+    const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
     const cleanedUpRef = useRef(false);
+    const effectIdRef = useRef(0);
 
     useEffect(() => {
         if (!roomId) return;
+
+        // Each effect invocation gets a unique ID.
+        // Old handlers check their ID vs current — stale ones bail out.
+        const myEffectId = ++effectIdRef.current;
+        const isStale = () => myEffectId !== effectIdRef.current;
+
         cleanedUpRef.current = false;
 
         let socket: WebSocket | null = null;
         let pc: RTCPeerConnection | null = null;
         let stream: MediaStream | null = null;
 
+        // Queue for ICE candidates that arrive before remoteDescription is set
+        let pendingCandidates: RTCIceCandidate[] = [];
+
         // ── Helpers (defined inside effect to avoid dependency issues) ──
 
         function createPC(targetPeerId?: string): RTCPeerConnection {
+            // Always close old PC first
+            if (pc) {
+                try { pc.close(); } catch { /* ignore */ }
+            }
+
             const newPc = new RTCPeerConnection(ICE_SERVERS);
+            pendingCandidates = []; // Reset queue for new connection
 
             newPc.onicecandidate = (e) => {
                 if (e.candidate && socket?.readyState === WebSocket.OPEN) {
@@ -65,9 +87,9 @@ export function useWebRTC(roomId: string) {
             newPc.onconnectionstatechange = () => {
                 if (cleanedUpRef.current) return;
                 const s = newPc.connectionState;
+                console.log("[RTC] connectionState:", s);
                 if (s === "connected") setCallState("connected");
                 if (s === "failed") setCallState("disconnected");
-                // Note: "disconnected" can be transient, don't immediately set error
             };
 
             // Add local tracks
@@ -86,11 +108,11 @@ export function useWebRTC(roomId: string) {
             try {
                 switch (msg.type) {
                     case "role":
-                        // Successfully joined the signaling room
                         setCallState("connected");
                         break;
 
                     case "existing-peers": {
+                        // We just joined and there's already someone here — WE create the offer
                         const peer = msg.peers?.[0];
                         if (peer) {
                             const newPc = createPC(peer.peerId);
@@ -106,12 +128,28 @@ export function useWebRTC(roomId: string) {
                     }
 
                     case "peer-joined":
-                        // A new peer joined — they will send us an offer
+                        // A new peer joined — clean up old PC so we're ready for their offer
+                        if (pc) {
+                            pc.close();
+                            pc = null;
+                            pcRef.current = null;
+                        }
+                        setRemoteStream(null);
                         break;
 
                     case "offer": {
-                        if (!pc) createPC(msg.fromPeerId);
+                        // Always create a FRESH PC for incoming offers
+                        // This avoids all signaling state conflicts
+                        createPC(msg.fromPeerId);
+
                         await pc!.setRemoteDescription(new RTCSessionDescription(msg.payload));
+
+                        // Flush any queued ICE candidates
+                        for (const c of pendingCandidates) {
+                            await pc!.addIceCandidate(c);
+                        }
+                        pendingCandidates = [];
+
                         const answer = await pc!.createAnswer();
                         await pc!.setLocalDescription(answer);
                         socket?.send(JSON.stringify({
@@ -123,17 +161,28 @@ export function useWebRTC(roomId: string) {
                     }
 
                     case "answer":
-                        await pc?.setRemoteDescription(new RTCSessionDescription(msg.payload));
+                        if (pc && pc.signalingState === "have-local-offer") {
+                            await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+                            // Flush any queued ICE candidates
+                            for (const c of pendingCandidates) {
+                                await pc.addIceCandidate(c);
+                            }
+                            pendingCandidates = [];
+                        }
                         break;
 
                     case "ice-candidate":
                         if (pc && pc.remoteDescription) {
                             await pc.addIceCandidate(new RTCIceCandidate(msg.payload));
+                        } else {
+                            // Queue until remoteDescription is set
+                            pendingCandidates.push(new RTCIceCandidate(msg.payload));
                         }
                         break;
 
                     case "peer-left":
                         setRemoteStream(null);
+                        setRemoteIsScreenSharing(false);
                         if (pc) {
                             pc.close();
                             pc = null;
@@ -141,10 +190,39 @@ export function useWebRTC(roomId: string) {
                         }
                         break;
 
+                    case "screen-share-started":
+                        setRemoteIsScreenSharing(true);
+                        break;
+
+                    case "screen-share-stopped":
+                        setRemoteIsScreenSharing(false);
+                        break;
+
+                    case "mute-state":
+                        setRemoteIsAudioMuted(msg.isAudioMuted ?? false);
+                        setRemoteIsVideoOff(msg.isVideoOff ?? false);
+                        break;
+
+                    case "chat-message":
+                        setChatMessages(prev => [...prev, {
+                            id: `${Date.now()}-${Math.random()}`,
+                            sender: msg.sender,
+                            text: msg.text,
+                            timestamp: msg.timestamp,
+                            isLocal: false,
+                        }]);
+                        break;
+
+                    case "recording-status":
+                        setRemoteRecording(msg.isRecording ? { isRecording: true, recorder: msg.recorder } : null);
+                        break;
+
                     case "error":
                         console.error("Signaling error:", msg.message);
-                        setCallState("error");
-                        setErrorMessage(msg.message);
+                        if (msg.message?.includes("not a participant") || msg.message?.includes("room not found")) {
+                            setCallState("error");
+                            setErrorMessage(msg.message);
+                        }
                         break;
                 }
             } catch (err) {
@@ -155,6 +233,7 @@ export function useWebRTC(roomId: string) {
         // ── Main initialization ──
 
         async function init() {
+            if (isStale()) return;
             setCallState("joining");
 
             try {
@@ -168,38 +247,57 @@ export function useWebRTC(roomId: string) {
                     }
                 }
 
+                if (isStale()) return; // Check after async
+
                 // 2. Get camera/mic
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: true,
                     audio: true,
                 });
-                localStreamRef.current = stream;
-                if (!cleanedUpRef.current) {
-                    setLocalStream(stream);
+
+                if (isStale()) {
+                    stream.getTracks().forEach(t => t.stop());
+                    return;
                 }
 
-                // 3. Connect WebSocket
-                socket = new WebSocket(WS_URL);
+                localStreamRef.current = stream;
+                cameraTrackRef.current = stream.getVideoTracks()[0] || null;
+                setLocalStream(stream);
+
+                // 3. Get WebSocket auth token (cookies may not be sent cross-origin)
+                const { token } = await apiRequest("/auth/ws-token", undefined, "GET");
+
+                if (isStale()) return;
+
+                // 4. Connect WebSocket with token in URL
+                const wsUrl = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+                socket = new WebSocket(wsUrl);
                 socketRef.current = socket;
 
                 socket.onopen = () => {
-                    if (!cleanedUpRef.current) {
-                        socket!.send(JSON.stringify({ type: "join", roomId }));
-                    }
+                    if (isStale()) { socket?.close(); return; }
+                    console.log("[WS-1v1] connected");
+                    socket!.send(JSON.stringify({ type: "join", roomId }));
                 };
 
                 socket.onmessage = (event) => {
+                    if (isStale()) return;
                     const msg = JSON.parse(event.data);
+                    console.log("[WS-1v1] recv:", msg.type);
                     handleMessage(msg);
                 };
 
                 socket.onclose = (event) => {
+                    if (isStale()) return;
+                    console.log(`[WS-1v1] close: code=${event.code} reason=${event.reason}`);
                     if (!cleanedUpRef.current && event.code !== 1000) {
                         setCallState("disconnected");
                     }
                 };
 
                 socket.onerror = () => {
+                    if (isStale()) return;
+                    console.error("[WS-1v1] error");
                     if (!cleanedUpRef.current) {
                         setCallState("error");
                         setErrorMessage("WebSocket connection failed");
@@ -242,12 +340,24 @@ export function useWebRTC(roomId: string) {
     }, [roomId]); // ONLY re-run when roomId changes
 
     // ── Controls ──
+    // Use refs to avoid stale closure issues when sending mute-state
+    const isAudioMutedRef = useRef(false);
+    const isVideoOffRef = useRef(false);
 
     const toggleAudio = () => {
         const track = localStreamRef.current?.getAudioTracks()[0];
         if (track) {
             track.enabled = !track.enabled;
-            setIsAudioMuted(!track.enabled);
+            const muted = !track.enabled;
+            isAudioMutedRef.current = muted;
+            setIsAudioMuted(muted);
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+                socketRef.current.send(JSON.stringify({
+                    type: "mute-state",
+                    isAudioMuted: muted,
+                    isVideoOff: isVideoOffRef.current,
+                }));
+            }
         }
     };
 
@@ -255,7 +365,16 @@ export function useWebRTC(roomId: string) {
         const track = localStreamRef.current?.getVideoTracks()[0];
         if (track) {
             track.enabled = !track.enabled;
-            setIsVideoOff(!track.enabled);
+            const off = !track.enabled;
+            isVideoOffRef.current = off;
+            setIsVideoOff(off);
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+                socketRef.current.send(JSON.stringify({
+                    type: "mute-state",
+                    isAudioMuted: isAudioMutedRef.current,
+                    isVideoOff: off,
+                }));
+            }
         }
     };
 
@@ -275,12 +394,32 @@ export function useWebRTC(roomId: string) {
             // Stop screen share — restore camera track
             screenTrackRef.current?.stop();
             screenTrackRef.current = null;
-            const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
-            if (cameraTrack) {
-                const videoSender = pc.getSenders().find((s) => s.track?.kind === "video" || s.track === null);
-                if (videoSender) await videoSender.replaceTrack(cameraTrack);
+
+            const camTrack = cameraTrackRef.current;
+            const videoSender = pc.getSenders().find((s) => s.track?.kind === "video" || s.track === null);
+
+            if (camTrack && camTrack.readyState === "live" && videoSender) {
+                await videoSender.replaceTrack(camTrack);
+            } else if (videoSender) {
+                // Camera track was stopped — get a fresh one
+                try {
+                    const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    const newCamTrack = newStream.getVideoTracks()[0];
+                    cameraTrackRef.current = newCamTrack;
+                    // Replace in local stream too
+                    const oldTrack = localStreamRef.current?.getVideoTracks()[0];
+                    if (oldTrack) localStreamRef.current?.removeTrack(oldTrack);
+                    localStreamRef.current?.addTrack(newCamTrack);
+                    await videoSender.replaceTrack(newCamTrack);
+                } catch {
+                    console.warn("Could not restore camera after screen share");
+                }
             }
             setIsScreenSharing(false);
+            // Notify remote peer
+            if (socketRef.current?.readyState === WebSocket.OPEN) {
+                socketRef.current.send(JSON.stringify({ type: "screen-share-stopped" }));
+            }
         } else {
             // Start screen share — replace camera track
             if (!navigator.mediaDevices?.getDisplayMedia) {
@@ -289,7 +428,9 @@ export function useWebRTC(roomId: string) {
             }
 
             try {
-                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }
+                });
                 const screenTrack = screenStream.getVideoTracks()[0];
                 screenTrackRef.current = screenTrack;
 
@@ -297,15 +438,35 @@ export function useWebRTC(roomId: string) {
                 if (videoSender) await videoSender.replaceTrack(screenTrack);
 
                 setIsScreenSharing(true);
+                // Notify remote peer
+                if (socketRef.current?.readyState === WebSocket.OPEN) {
+                    socketRef.current.send(JSON.stringify({ type: "screen-share-started" }));
+                }
 
                 // When user stops share via browser UI
-                screenTrack.onended = () => {
+                screenTrack.onended = async () => {
                     screenTrackRef.current = null;
-                    const camTrack = localStreamRef.current?.getVideoTracks()[0];
-                    if (camTrack && videoSender) {
-                        videoSender.replaceTrack(camTrack);
+                    const camTrack = cameraTrackRef.current;
+                    if (camTrack && camTrack.readyState === "live" && videoSender) {
+                        await videoSender.replaceTrack(camTrack);
+                    } else if (videoSender) {
+                        try {
+                            const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                            const newCamTrack = newStream.getVideoTracks()[0];
+                            cameraTrackRef.current = newCamTrack;
+                            const oldTrack = localStreamRef.current?.getVideoTracks()[0];
+                            if (oldTrack) localStreamRef.current?.removeTrack(oldTrack);
+                            localStreamRef.current?.addTrack(newCamTrack);
+                            await videoSender.replaceTrack(newCamTrack);
+                        } catch {
+                            console.warn("Could not restore camera after screen share");
+                        }
                     }
                     setIsScreenSharing(false);
+                    // Notify remote peer
+                    if (socketRef.current?.readyState === WebSocket.OPEN) {
+                        socketRef.current.send(JSON.stringify({ type: "screen-share-stopped" }));
+                    }
                 };
             } catch (err: any) {
                 console.error("Screen share failed:", err);
@@ -318,19 +479,43 @@ export function useWebRTC(roomId: string) {
         }
     };
 
+    const sendChatMessage = (text: string) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify({ type: "chat-message", text }));
+        setChatMessages(prev => [...prev, {
+            id: `${Date.now()}-${Math.random()}`,
+            sender: "You",
+            text,
+            timestamp: Date.now(),
+            isLocal: true,
+        }]);
+    };
+
+    const sendSignal = (data: any) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify(data));
+    };
+
     return {
         callState,
         localStream,
         remoteStream,
+        remoteIsScreenSharing,
+        remoteIsAudioMuted,
+        remoteIsVideoOff,
         role: null,
         participants: [],
         isAudioMuted,
         isVideoOff,
         isScreenSharing,
         errorMessage,
+        chatMessages,
+        remoteRecording,
         toggleAudio,
         toggleVideo,
         toggleScreenShare,
+        sendChatMessage,
+        sendSignal,
         endCall,
     };
 }

@@ -29,28 +29,57 @@ export function registerWebRtcHandlers(router: {
     }
 
     void (async () => {
+      console.log(`[JOIN] peerId=${ctx.peerId} userId=${ctx.userId} roomId=${roomId}`);
+
       const room = await prisma.room.findUnique({
         where: { id: roomId },
         select: { id: true, hostId: true, isActive: true, maxParticipants: true, type: true },
       });
 
+      // Look up username
+      const user = await prisma.user.findUnique({
+        where: { id: ctx.userId },
+        select: { username: true },
+      });
+      ctx.username = user?.username || ctx.userId.slice(0, 8);
+      console.log(`[JOIN] username=${ctx.username}`);
+
       if (!room) {
+        console.log(`[JOIN] ERROR: room not found`);
         ctx.ws.send(JSON.stringify({ type: "error", message: "room not found" }));
         return;
       }
       if (!room.isActive) {
+        console.log(`[JOIN] ERROR: meeting has ended`);
         ctx.ws.send(JSON.stringify({ type: "error", message: "meeting has ended" }));
         return;
       }
       if (roomService.isFull(roomId, room.maxParticipants)) {
+        console.log(`[JOIN] ERROR: room full`);
         return ctx.ws.send(JSON.stringify({ type: "error", message: "room full" }));
       }
 
       // Handle re-connections
       if (roomService.isUserInRoom(roomId, ctx.userId)) {
+        console.log(`[JOIN] User already in room, removing old connection`);
+
+        // Get old peer IDs before removing
+        const oldPeers = roomService.getPeers(roomId).filter(p => p.userId === ctx.userId);
+
+        // Close SFU resources for old peer(s)
+        const closedProducerIds: string[] = [];
+        for (const oldPeer of oldPeers) {
+          const producerIds = sfuService.closePeer(oldPeer.peerId);
+          closedProducerIds.push(...producerIds);
+        }
+
         roomService.removeUserFromRoom(roomId, ctx.userId);
+
+        // Notify others with the closed producer IDs so they can clean up consumers
         roomService.broadcastToRoomExcept(roomId, ctx.peerId, {
-          type: "peer-left", userId: ctx.userId, message: "connection replaced",
+          type: "peer-left", userId: ctx.userId,
+          peerId: oldPeers[0]?.peerId, closedProducerIds,
+          message: "connection replaced",
         });
       }
 
@@ -64,6 +93,7 @@ export function registerWebRtcHandlers(router: {
           select: { role: true },
         });
         if (!participant) {
+          console.log(`[JOIN] ERROR: not a participant — join via API first`);
           ctx.ws.send(JSON.stringify({ type: "error", message: "not a participant — join via API first" }));
           return;
         }
@@ -72,7 +102,7 @@ export function registerWebRtcHandlers(router: {
 
       // Register peer in-memory
       roomService.addPeer(roomId, {
-        peerId: ctx.peerId, userId: ctx.userId!, role,
+        peerId: ctx.peerId, userId: ctx.userId!, username: ctx.username || ctx.userId.slice(0, 8), role,
         socket: ctx.ws as WebSocket,
       });
       ctx.roomId = roomId;
@@ -83,23 +113,26 @@ export function registerWebRtcHandlers(router: {
         await sfuService.getOrCreateRouter(roomId);
       }
 
+      console.log(`[JOIN] SUCCESS: role=${role} roomType=${room.type}`);
+
       // Tell joining peer their role + room type
       ctx.ws.send(JSON.stringify({
-        type: "role", role, peerId: ctx.peerId, roomType: room.type,
+        type: "role", role, peerId: ctx.peerId, roomType: room.type, username: ctx.username,
       }));
 
       // Tell existing peers about new peer, and vice versa
       const allPeers = roomService.getPeers(roomId);
+      console.log(`[JOIN] Total peers in room: ${allPeers.length}`);
       if (allPeers.length > 1) {
         roomService.broadcastToRoomExcept(roomId, ctx.peerId, {
-          type: "peer-joined", peerId: ctx.peerId, userId: ctx.userId, role,
+          type: "peer-joined", peerId: ctx.peerId, userId: ctx.userId, username: ctx.username, role,
         });
 
         ctx.ws.send(JSON.stringify({
           type: "existing-peers",
           peers: allPeers
             .filter((p) => p.peerId !== ctx.peerId)
-            .map((p) => ({ peerId: p.peerId, userId: p.userId, role: p.role })),
+            .map((p) => ({ peerId: p.peerId, userId: p.userId, username: p.username, role: p.role })),
         }));
 
         // For GROUP rooms, notify of existing producers
@@ -110,7 +143,7 @@ export function registerWebRtcHandlers(router: {
             for (const prod of sfuService.getAllProducersForPeer(peer.peerId)) {
               existingProducers.push({
                 producerId: prod.producerId, peerId: peer.peerId,
-                userId: peer.userId, kind: prod.kind,
+                userId: peer.userId, username: peer.username, kind: prod.kind,
               });
             }
           }
@@ -168,6 +201,53 @@ export function registerWebRtcHandlers(router: {
     }
   });
 
+  // Forward mute/camera state changes to other peers
+  router.register("mute-state", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "mute-state",
+      peerId: ctx.peerId,
+      isAudioMuted: message.isAudioMuted,
+      isVideoOff: message.isVideoOff,
+    });
+  });
+
+  // Forward chat messages to all other peers
+  router.register("chat-message", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "chat-message",
+      sender: ctx.username || ctx.userId.slice(0, 8),
+      text: message.text,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Broadcast recording status to all peers
+  router.register("recording-status", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "recording-status",
+      isRecording: message.isRecording,
+      recorder: ctx.username || ctx.userId.slice(0, 8),
+    });
+  });
+
+  // Forward screen share status to remote peer (1:1)
+  router.register("screen-share-started", (ctx: ConnContext) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "screen-share-started", fromPeerId: ctx.peerId,
+    });
+  });
+
+  router.register("screen-share-stopped", (ctx: ConnContext) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "screen-share-stopped", fromPeerId: ctx.peerId,
+    });
+  });
+
   // ══════════════════════════════════════════════════
   // SFU SIGNALING (mediasoup group calls)
   // ══════════════════════════════════════════════════
@@ -202,7 +282,7 @@ export function registerWebRtcHandlers(router: {
   router.register("produce", (ctx: ConnContext, message: any) => {
     if (!ctx.roomId) return;
     void (async () => {
-      const producerId = await sfuService.produce(ctx.peerId, message.transportId, message.kind, message.rtpParameters);
+      const producerId = await sfuService.produce(ctx.peerId, message.transportId, message.kind, message.rtpParameters, message.appData || {});
       ctx.ws.send(JSON.stringify({ type: "produced", producerId }));
 
       // Notify all other peers that a new producer is available
@@ -211,6 +291,7 @@ export function registerWebRtcHandlers(router: {
         producerId,
         peerId: ctx.peerId,
         userId: ctx.userId,
+        username: ctx.username,
         kind: message.kind,
         appData: message.appData,
       });
@@ -253,6 +334,7 @@ export function registerWebRtcHandlers(router: {
 
   // ── DISCONNECT (shared: both 1:1 and group) ──────
   router.register("disconnect", (ctx: ConnContext) => {
+    console.log(`[DISCONNECT] peerId=${ctx.peerId} userId=${ctx.userId} roomId=${ctx.roomId}`);
     if (!ctx.roomId) return;
 
     // Clean up SFU resources

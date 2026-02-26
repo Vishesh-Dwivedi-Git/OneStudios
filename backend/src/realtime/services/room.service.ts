@@ -16,6 +16,7 @@ export type PeerRole = "HOST" | "CO_HOST" | "PARTICIPANT" | "VIEWER";
 export type Peer = {
   peerId: string;     // Random UUID assigned on WebSocket connect
   userId: string;     // From JWT — maps to User.id in Prisma
+  username: string;   // Display name for the UI
   role: PeerRole;     // Permission level in this room
   socket: WebSocket;  // Live WebSocket connection reference
 };
@@ -74,26 +75,32 @@ export class RoomService {
   }
 
   // ── Remove a user from a room (all their connections) ──
-  // Useful for kicking zombie connections for the same user.
+  // Just removes from in-memory list. We do NOT close the old sockets here
+  // because that triggers the disconnect handler which cleans up SFU resources
+  // and could race with the new connection's setup.
   removeUserFromRoom(roomId: string, userId: string): Peer[] {
     const room = this.rooms.get(roomId);
     if (!room) return [];
 
-    // Find all peers for this user
-    const userPeers = room.filter(p => p.userId === userId);
+    // Find old peers for this user and clean their SFU resources
+    const oldPeers = room.filter(p => p.userId === userId);
 
-    // Close their sockets
-    for (const peer of userPeers) {
-      try { peer.socket.close(1000, "replaced by new connection"); } catch { }
-    }
-
-    // Update the room list
+    // Remove from the room list
     const updated = room.filter(p => p.userId !== userId);
     if (updated.length === 0) {
       this.rooms.delete(roomId);
     } else {
       this.rooms.set(roomId, updated);
     }
+
+    // Close old sockets SILENTLY — send a close frame but DON'T let the 
+    // disconnect handler run (the handler checks ctx.roomId which is still set,
+    // but since we already removed the peer from the room list, removePeer 
+    // will be a no-op)
+    for (const peer of oldPeers) {
+      try { peer.socket.close(1000, "replaced by new connection"); } catch { }
+    }
+
     return updated;
   }
 

@@ -23,7 +23,7 @@ export const CALL_THEMES: CallTheme[] = [
     {
         id: "default",
         name: "System / Default",
-        bgClass: "bg-background",
+        bgClass: "call-theme-default",
         textClass: "text-foreground",
         glassClass: "glass-light",
         preview: "linear-gradient(135deg, #ffffff, #f4f4f5)",

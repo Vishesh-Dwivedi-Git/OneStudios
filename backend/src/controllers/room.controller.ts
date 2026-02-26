@@ -150,17 +150,19 @@ export const joinRoom = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "This meeting has ended" });
     }
 
-    if (room._count.participants >= room.maxParticipants) {
-      return res.status(400).json({ message: "Room is full" });
-    }
-
-    // Check if user is already a participant
+    // Check if user is already a participant FIRST —
+    // they should always be allowed to re-join regardless of room capacity
     const existingParticipant = await prisma.roomParticipant.findFirst({
       where: { roomId, userId, leftAt: null },
     });
 
     if (existingParticipant) {
       return res.json({ message: "Already in this room", participant: existingParticipant });
+    }
+
+    // Only check capacity for genuinely NEW participants
+    if (room._count.participants >= room.maxParticipants) {
+      return res.status(400).json({ message: "Room is full" });
     }
 
     const participant = await prisma.roomParticipant.create({
@@ -214,16 +216,18 @@ export const joinByInviteCode = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "This meeting has ended" });
     }
 
-    if (room._count.participants >= room.maxParticipants) {
-      return res.status(400).json({ message: "Room is full" });
-    }
-
+    // Check if user is already a participant FIRST
     const existingParticipant = await prisma.roomParticipant.findFirst({
       where: { roomId: room.id, userId, leftAt: null },
     });
 
     if (existingParticipant) {
       return res.json({ message: "Already in this room", roomId: room.id, participant: existingParticipant });
+    }
+
+    // Only check capacity for genuinely NEW participants
+    if (room._count.participants >= room.maxParticipants) {
+      return res.status(400).json({ message: "Room is full" });
     }
 
     const participant = await prisma.roomParticipant.create({

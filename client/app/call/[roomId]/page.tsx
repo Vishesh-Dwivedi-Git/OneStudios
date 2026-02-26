@@ -1,12 +1,13 @@
 "use client";
 
 import { useWebRTC } from "@/hooks/use-webrtc";
+import { useRecording } from "@/hooks/use-recording";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { CallControls } from "@/components/CallControls";
 import { ShareDialog } from "@/components/ShareDialog";
-import { CallThemeSwitcher, useCallTheme } from "@/components/CallThemeSwitcher";
-import { useState, useCallback, useEffect, use } from "react";
-import { Video, Clock, Users, Share2, Shield, Settings, AlertCircle, Loader2 } from "lucide-react";
+import { ChatPanel } from "@/components/ChatPanel";
+import { useState, useEffect, use } from "react";
+import { Video, Clock, Users, Share2, Shield, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
 export default function CallPage({ params }: { params: Promise<{ roomId: string }> }) {
@@ -15,8 +16,9 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         callState,
         localStream,
         remoteStream,
-        role,
-        participants,
+        remoteIsScreenSharing,
+        remoteIsAudioMuted,
+        remoteIsVideoOff,
         isAudioMuted,
         isVideoOff,
         isScreenSharing,
@@ -24,13 +26,20 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         toggleVideo,
         toggleScreenShare,
         errorMessage,
+        chatMessages,
+        remoteRecording,
+        sendChatMessage,
+        sendSignal,
         endCall,
     } = useWebRTC(roomId);
+
+    const { isRecording, toggleRecording, stopRecording } = useRecording(roomId);
 
     const [time, setTime] = useState(0);
     const [inviteCode, setInviteCode] = useState<string | undefined>();
     const [showShare, setShowShare] = useState(false);
-    const { theme, setTheme } = useCallTheme();
+    const [showChat, setShowChat] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
 
     useEffect(() => {
         const timer = setInterval(() => setTime(prev => prev + 1), 1000);
@@ -43,6 +52,34 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
             .catch(() => { });
     }, [roomId]);
 
+    // Track unread messages when chat is closed
+    useEffect(() => {
+        if (!showChat && chatMessages.length > 0) {
+            const lastMsg = chatMessages[chatMessages.length - 1];
+            if (!lastMsg.isLocal) {
+                setUnreadCount(prev => prev + 1);
+            }
+        }
+    }, [chatMessages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const toggleChat = () => {
+        setShowChat(prev => !prev);
+        if (!showChat) setUnreadCount(0);
+    };
+
+    // ── Recording with canvas compositing ──
+    const handleToggleRecording = () => {
+        const willRecord = !isRecording;
+        const streams = [
+            { stream: localStream, label: "You" },
+            { stream: remoteStream, label: "Remote" },
+        ];
+        toggleRecording(streams);
+
+        // Notify remote participant about recording status
+        sendSignal({ type: "recording-status", isRecording: willRecord });
+    };
+
     const formatTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
@@ -53,7 +90,7 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-background gap-4">
                 <Loader2 className="animate-spin text-primary" size={48} />
-                <p className="text-xl font-medium animate-pulse">Joining Meeting...</p>
+                <p className="text-xl font-medium text-foreground animate-pulse">Joining Meeting...</p>
             </div>
         );
     }
@@ -64,13 +101,13 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
                 <div className="bg-destructive/10 p-6 rounded-full text-destructive mb-4">
                     <Users size={64} />
                 </div>
-                <h1 className="text-2xl font-bold">Connection Failed</h1>
+                <h1 className="text-2xl font-bold text-foreground">Connection Failed</h1>
                 <p className="text-muted-foreground max-w-sm">
                     {errorMessage || "We couldn't establish a connection to the meeting."}
                 </p>
                 <button
                     onClick={() => window.location.href = "/"}
-                    className="mt-6 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium shadow-soft hover:opacity-90 transition-all"
+                    className="mt-6 px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium hover:opacity-90 transition-all"
                 >
                     Return to Home
                 </button>
@@ -78,118 +115,152 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         );
     }
 
+    const leaveRoom = () => {
+        if (isRecording) stopRecording();
+        endCall();
+        window.location.href = "/";
+    };
+
     return (
-        <div className={`min-h-screen transition-all duration-700 ${theme.bgClass} flex flex-col overflow-hidden ${theme.textClass}`}>
+        <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden relative">
+            {/* Decorative blobs */}
+            <div className="absolute top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
+                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px]" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[120px]" />
+            </div>
+
             {/* ── Header ── */}
-            <header className={`h-16 shrink-0 flex items-center justify-between px-4 sm:px-8 ${theme.glassClass} border-b border-black/5 dark:border-white/10 z-[60] relative transition-colors duration-500`}>
+            <header className="h-16 shrink-0 flex items-center justify-between px-4 sm:px-8 bg-background/80 backdrop-blur-xl border-b border-border z-50">
                 <div className="flex items-center gap-3 sm:gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center border border-primary/30 shadow-lg">
-                        <Video className="text-primary" size={24} />
+                    <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center border border-primary/30">
+                        <Video className="text-primary" size={22} />
                     </div>
                     <div className="flex flex-col">
-                        <h1 className="font-bold text-base sm:text-lg leading-tight">OneStudios Meeting</h1>
-                        <p className="text-[10px] sm:text-xs opacity-60 font-medium">#{roomId.slice(0, 8)}</p>
+                        <h1 className="font-bold text-base sm:text-lg leading-tight text-foreground">OneStudios Meeting</h1>
+                        <p className="text-[10px] sm:text-xs text-muted-foreground font-medium">#{roomId.slice(0, 8)}</p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 sm:gap-4">
-                    <div className={`hidden md:flex items-center gap-6 ${theme.glassClass} px-4 py-1.5 rounded-full border border-black/5 dark:border-white/5`}>
-                        <div className="flex items-center gap-2 text-xs font-bold opacity-90">
+                <div className="flex items-center gap-3">
+                    {isRecording && (
+                        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 px-3 py-1.5 rounded-full">
+                            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                            <span className="text-xs font-bold text-red-500">REC</span>
+                        </div>
+                    )}
+                    <div className="hidden md:flex items-center gap-4 bg-muted/50 px-4 py-1.5 rounded-full border border-border">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
                             <Clock size={14} className="text-primary" />
                             <span>{formatTime(time)}</span>
                         </div>
-                        <div className="w-px h-3 bg-white/20" />
-                        <div className="flex items-center gap-2 text-xs font-bold opacity-90">
-                            <Users size={14} className="text-primary" />
-                            <span>{remoteStream ? "2" : "1"} / 2</span>
-                        </div>
                     </div>
 
-                    <div className="flex items-center gap-2 sm:gap-3 bg-current/5 p-1 rounded-xl border border-black/5 dark:border-white/10 shadow-inner">
-                        <CallThemeSwitcher currentThemeId={theme.id} onSelect={setTheme} />
-                        <div className="w-px h-6 bg-current opacity-10 hidden sm:block" />
-                        <button
-                            onClick={() => setShowShare(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-primary/20 transition-all border border-transparent hover:border-primary/30"
-                            title="Invite Participant"
-                        >
-                            <Share2 size={16} />
-                            <span className="hidden sm:inline">Invite</span>
-                        </button>
-                    </div>
+                    <button
+                        onClick={() => setShowShare(true)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-muted/50 border border-border hover:bg-muted transition-all text-foreground"
+                        title="Invite Participant"
+                    >
+                        <Share2 size={16} />
+                        <span className="hidden sm:inline">Invite</span>
+                    </button>
                 </div>
             </header>
 
-            <main className="flex-1 flex flex-col p-3 sm:p-4 md:p-6 overflow-hidden relative">
-                {/* Error Monitoring Toast */}
-                {errorMessage && (
-                    <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-4 duration-300">
-                        <div className="bg-destructive/90 backdrop-blur-md text-white px-6 py-3 rounded-2xl shadow-2xl border border-white/20 flex items-center gap-3">
-                            <Shield size={20} className="animate-pulse" />
-                            <span className="text-sm font-bold">{errorMessage}</span>
-                            <button onClick={() => window.location.reload()} className="ml-2 underline text-xs decoration-white/30 hover:decoration-white font-black">Reload</button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ── Video Grid ── */}
-                <div className="flex-1 min-h-0 relative">
-                    <div className={`h-full w-full grid gap-4 md:gap-6 ${remoteStream ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
-                        {/* Remote Video (or Placeholder) */}
-                        {remoteStream ? (
-                            <div className="h-full min-h-0">
-                                <VideoPlayer stream={remoteStream} label="Remote Participant" />
+            {/* ── Main Content ── */}
+            <div className="flex-1 flex overflow-hidden">
+                {/* Video area */}
+                <main className={`flex-1 flex flex-col p-3 sm:p-4 md:p-6 overflow-hidden relative transition-all duration-300 ${showChat ? 'mr-0' : ''}`}>
+                    {/* Error Toast */}
+                    {errorMessage && (
+                        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100]">
+                            <div className="bg-destructive text-destructive-foreground px-6 py-3 rounded-2xl shadow-lg border border-border flex items-center gap-3">
+                                <Shield size={20} />
+                                <span className="text-sm font-bold">{errorMessage}</span>
+                                <button onClick={() => window.location.reload()} className="ml-2 underline text-xs font-black">Reload</button>
                             </div>
-                        ) : (
-                            <div className="h-full relative flex flex-col items-center justify-center bg-background/50 backdrop-blur-3xl rounded-3xl border border-current/10 overflow-hidden">
-                                <div className="absolute inset-0 bg-primary/5 animate-pulse" />
-                                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
-                                    <div className={`${theme.glassClass} border border-current/10 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-xl animate-pulse`}>
-                                        <Users size={14} className="text-primary" />
-                                        <span className={`text-[10px] font-bold uppercase tracking-widest leading-none opacity-80`}>Waiting for participant...</span>
+                        </div>
+                    )}
+
+                    {/* Remote Recording Notification */}
+                    {remoteRecording && (
+                        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-5 duration-300">
+                            <div className="bg-red-500/10 border border-red-500/30 px-5 py-2.5 rounded-2xl shadow-lg flex items-center gap-3">
+                                <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                                <span className="text-sm font-bold text-red-500">
+                                    {remoteRecording.recorder} is recording this meeting
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                    {/* ── Video Grid ── */}
+                    <div className="flex-1 min-h-0 relative">
+                        <div className={`h-full w-full grid gap-4 md:gap-6 ${remoteStream ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
+                            {remoteStream ? (
+                                <div className="h-full min-h-0">
+                                    <VideoPlayer stream={remoteStream} label="Remote Participant" isScreenShare={remoteIsScreenSharing} isMuted={remoteIsAudioMuted} isVideoOff={remoteIsVideoOff} />
+                                </div>
+                            ) : (
+                                <div className="h-full relative flex flex-col items-center justify-center bg-muted/30 rounded-2xl border border-border overflow-hidden">
+                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+                                        <div className="bg-muted/50 border border-border px-4 py-1.5 rounded-full flex items-center gap-2">
+                                            <Users size={14} className="text-primary" />
+                                            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Waiting for participant...</span>
+                                        </div>
+                                    </div>
+                                    <div className="bg-muted p-8 rounded-full text-muted-foreground border border-border z-10">
+                                        <Users size={48} />
                                     </div>
                                 </div>
-                                <div className="bg-primary/10 p-8 rounded-full text-primary border border-primary/20 shadow-2xl z-10 opacity-40">
-                                    <Users size={48} />
-                                </div>
-                            </div>
-                        )}
+                            )}
 
-                        {/* Local Video */}
-                        {/* If alone, show as floating picture-in-picture. If not, side-by-side. */}
-                        <div className={remoteStream ? "h-full min-h-0" : "absolute bottom-4 right-4 w-48 sm:w-64 md:w-80 h-auto aspect-video z-20"}>
-                            <VideoPlayer
-                                stream={localStream}
-                                label="You"
-                                isLocal
-                                isMuted={isAudioMuted}
-                            />
+                            <div className={remoteStream ? "h-full min-h-0" : "absolute bottom-4 right-4 w-48 sm:w-64 md:w-80 h-auto aspect-video z-20"}>
+                                <VideoPlayer
+                                    stream={localStream}
+                                    label="You"
+                                    isLocal
+                                    isMuted={isAudioMuted}
+                                    isVideoOff={isVideoOff}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* ── Controls Spacer (to avoid overlap) ── */}
-                <div className="h-24 md:h-28 shrink-0" />
+                    <div className="h-20 shrink-0" />
 
-                {/* ── Controls ── */}
-                <CallControls
-                    isAudioMuted={isAudioMuted}
-                    isVideoOff={isVideoOff}
-                    isScreenSharing={isScreenSharing}
-                    glassClass={theme.glassClass}
-                    onToggleAudio={toggleAudio}
-                    onToggleVideo={toggleVideo}
-                    onToggleScreenShare={toggleScreenShare}
-                    onEndCall={endCall}
-                />
+                    <CallControls
+                        isAudioMuted={isAudioMuted}
+                        isVideoOff={isVideoOff}
+                        isScreenSharing={isScreenSharing}
+                        isRecording={isRecording}
+                        unreadCount={unreadCount}
+                        onToggleAudio={toggleAudio}
+                        onToggleVideo={toggleVideo}
+                        onToggleScreenShare={toggleScreenShare}
+                        onToggleChat={toggleChat}
+                        onToggleRecording={handleToggleRecording}
+                        onEndCall={leaveRoom}
+                    />
 
-                {/* ── Status Toast ── */}
-                {callState === "disconnected" && (
-                    <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-destructive text-white px-4 py-2 rounded-full shadow-lg z-50 animate-bounce text-sm font-medium">
-                        Connection Interrupted
-                    </div>
+                    {callState === "disconnected" && (
+                        <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-destructive text-destructive-foreground px-4 py-2 rounded-full shadow-lg z-50 animate-bounce text-sm font-medium">
+                            Connection Interrupted
+                        </div>
+                    )}
+                </main>
+
+                {/* Chat Panel */}
+                {showChat && (
+                    <aside className="w-80 shrink-0 h-full border-l border-border animate-in slide-in-from-right-10 duration-300">
+                        <ChatPanel
+                            messages={chatMessages}
+                            onSend={sendChatMessage}
+                            onClose={toggleChat}
+                            localUsername="You"
+                        />
+                    </aside>
                 )}
-            </main>
+            </div>
+
             {inviteCode && (
                 <ShareDialog
                     isOpen={showShare}
