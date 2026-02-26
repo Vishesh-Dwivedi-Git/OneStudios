@@ -233,6 +233,30 @@ export function registerWebRtcHandlers(router: {
     });
   });
 
+  // Relay recording chunks P2P (group calls — pass-through, never stored)
+  router.register("recording-chunk", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId || !message.targetPeerId) return;
+    roomService.sendToPeer(ctx.roomId, message.targetPeerId, {
+      type: "recording-chunk",
+      fromPeerId: ctx.peerId,
+      fromUsername: ctx.username || ctx.userId.slice(0, 8),
+      chunkIndex: message.chunkIndex,
+      totalChunks: message.totalChunks,
+      data: message.data, // base64 encoded chunk
+    });
+  });
+
+  // Notify initiator that a peer finished sending all recording chunks
+  router.register("recording-complete", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId || !message.targetPeerId) return;
+    roomService.sendToPeer(ctx.roomId, message.targetPeerId, {
+      type: "recording-complete",
+      fromPeerId: ctx.peerId,
+      fromUsername: ctx.username || ctx.userId.slice(0, 8),
+      totalSize: message.totalSize,
+    });
+  });
+
   // Forward screen share status to remote peer (1:1)
   router.register("screen-share-started", (ctx: ConnContext) => {
     if (!ctx.roomId) return;

@@ -2,181 +2,238 @@
 
 import { useRef, useState, useCallback } from "react";
 
-interface RecordingStream {
-    stream: MediaStream | null;
-    label: string;
-}
-
 /**
- * Hook that records the entire meeting by:
- * 1. Drawing all video feeds onto a canvas (composited grid)
- * 2. Mixing all audio tracks via AudioContext
- * 3. Combining canvas video + mixed audio into one MediaRecorder
+ * Canvas-composite recording hook.
+ *
+ * Draws ALL participant video streams onto a single canvas in a grid layout,
+ * captures that canvas + mixed audio, and records the composite at high quality.
+ *
+ * The result is a single video file showing all participants arranged like
+ * a meeting layout — just like a screen recording of the call.
  */
-export function useRecording(roomId: string) {
+
+type StreamEntry = { stream: MediaStream; label: string };
+
+export function useRecording(roomId: string, username: string = "user") {
     const [isRecording, setIsRecording] = useState(false);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const animFrameRef = useRef<number>(0);
-    const videoElementsRef = useRef<HTMLVideoElement[]>([]);
-    const audioCtxRef = useRef<AudioContext | null>(null);
+    const videoElemsRef = useRef<HTMLVideoElement[]>([]);
 
-    const startRecording = useCallback((streams: RecordingStream[]) => {
-        // Filter out null/empty streams
-        const validStreams = streams.filter(s => s.stream && s.stream.getTracks().length > 0);
-        if (validStreams.length === 0) return;
+    /**
+     * Start recording all streams composited on a canvas.
+     * @param streams — array of { stream, label } for each participant
+     */
+    const startRecording = useCallback((streams: StreamEntry[]) => {
+        if (isRecording || streams.length === 0) return;
 
-        // ── 1. Create off-screen canvas ──
+        // ── Canvas setup ──
+        const WIDTH = 1920;
+        const HEIGHT = 1080;
         const canvas = document.createElement("canvas");
-        const cols = validStreams.length <= 1 ? 1 : 2;
-        const rows = Math.ceil(validStreams.length / cols);
-        canvas.width = 1280;
-        canvas.height = 720;
-        canvasRef.current = canvas;
+        canvas.width = WIDTH;
+        canvas.height = HEIGHT;
         const ctx = canvas.getContext("2d")!;
+        canvasRef.current = canvas;
 
-        // ── 2. Create hidden video elements for each stream ──
-        const videoElements: HTMLVideoElement[] = [];
-        for (const s of validStreams) {
-            const video = document.createElement("video");
-            video.srcObject = s.stream;
-            video.muted = true; // mute to avoid echo — audio handled separately
-            video.playsInline = true;
-            video.play().catch(() => { });
-            videoElements.push(video);
+        // Create hidden <video> elements to draw from
+        const videoElems: HTMLVideoElement[] = streams.map(({ stream }) => {
+            const vid = document.createElement("video");
+            vid.srcObject = stream;
+            vid.muted = true; // avoid echo
+            vid.playsInline = true;
+            vid.play().catch(() => { });
+            return vid;
+        });
+        videoElemsRef.current = videoElems;
+
+        // ── Grid layout calculator ──
+        function getGrid(count: number) {
+            if (count <= 1) return { cols: 1, rows: 1 };
+            if (count === 2) return { cols: 2, rows: 1 };
+            if (count <= 4) return { cols: 2, rows: 2 };
+            if (count <= 6) return { cols: 3, rows: 2 };
+            if (count <= 9) return { cols: 3, rows: 3 };
+            return { cols: 4, rows: Math.ceil(count / 4) };
         }
-        videoElementsRef.current = videoElements;
 
-        // ── 3. Draw loop — composites all video feeds onto canvas ──
-        const cellW = canvas.width / cols;
-        const cellH = canvas.height / rows;
+        // ── Draw loop ──
+        function drawFrame() {
+            // Dark background
+            ctx.fillStyle = "#0a0a0a";
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-        function draw() {
-            ctx.fillStyle = "#1a1a2e";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const count = videoElems.length;
+            const { cols, rows } = getGrid(count);
+            const gap = 8;
+            const cellW = (WIDTH - gap * (cols + 1)) / cols;
+            const cellH = (HEIGHT - gap * (rows + 1)) / rows;
 
-            videoElements.forEach((video, i) => {
+            videoElems.forEach((vid, i) => {
                 const col = i % cols;
                 const row = Math.floor(i / cols);
-                const x = col * cellW;
-                const y = row * cellH;
+                const x = gap + col * (cellW + gap);
+                const y = gap + row * (cellH + gap);
 
-                // Draw video maintaining aspect ratio
-                if (video.videoWidth && video.videoHeight) {
-                    const vAspect = video.videoWidth / video.videoHeight;
-                    const cAspect = cellW / cellH;
-                    let dw = cellW, dh = cellH, dx = x, dy = y;
+                // Rounded rectangle background
+                ctx.fillStyle = "#1a1a2e";
+                ctx.beginPath();
+                ctx.roundRect(x, y, cellW, cellH, 12);
+                ctx.fill();
 
-                    if (vAspect > cAspect) {
-                        // Video wider than cell — fit width, center vertically
-                        dh = cellW / vAspect;
-                        dy = y + (cellH - dh) / 2;
+                // Draw video if it has frames
+                if (vid.readyState >= 2 && vid.videoWidth > 0) {
+                    // Cover-fit: fill the cell while maintaining aspect ratio
+                    const vidAspect = vid.videoWidth / vid.videoHeight;
+                    const cellAspect = cellW / cellH;
+                    let sx = 0, sy = 0, sw = vid.videoWidth, sh = vid.videoHeight;
+
+                    if (vidAspect > cellAspect) {
+                        // Video is wider → crop sides
+                        sw = vid.videoHeight * cellAspect;
+                        sx = (vid.videoWidth - sw) / 2;
                     } else {
-                        // Video taller — fit height, center horizontally
-                        dw = cellH * vAspect;
-                        dx = x + (cellW - dw) / 2;
+                        // Video is taller → crop top/bottom
+                        sh = vid.videoWidth / cellAspect;
+                        sy = (vid.videoHeight - sh) / 2;
                     }
 
-                    ctx.drawImage(video, dx, dy, dw, dh);
+                    // Clip to rounded rect
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.roundRect(x, y, cellW, cellH, 12);
+                    ctx.clip();
+                    ctx.drawImage(vid, sx, sy, sw, sh, x, y, cellW, cellH);
+                    ctx.restore();
+                } else {
+                    // No video — show placeholder with initials
+                    ctx.fillStyle = "#2a2a4e";
+                    ctx.beginPath();
+                    ctx.roundRect(x, y, cellW, cellH, 12);
+                    ctx.fill();
+
+                    const initial = (streams[i]?.label || "?")[0].toUpperCase();
+                    ctx.fillStyle = "#888";
+                    ctx.font = `bold ${Math.min(cellW, cellH) * 0.3}px sans-serif`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(initial, x + cellW / 2, y + cellH / 2);
                 }
 
-                // Draw name label
-                const label = validStreams[i]?.label || "";
-                if (label) {
-                    ctx.fillStyle = "rgba(0,0,0,0.5)";
-                    const textW = ctx.measureText(label).width + 16;
-                    ctx.fillRect(x + 8, y + cellH - 32, textW, 24);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 13px Inter, sans-serif";
-                    ctx.fillText(label, x + 16, y + cellH - 14);
-                }
-
-                // Draw cell border
-                ctx.strokeStyle = "rgba(255,255,255,0.1)";
-                ctx.strokeRect(x, y, cellW, cellH);
+                // Name label
+                const label = streams[i]?.label || "Unknown";
+                const labelH = 28;
+                ctx.fillStyle = "rgba(0,0,0,0.6)";
+                ctx.beginPath();
+                ctx.roundRect(x + 8, y + cellH - labelH - 8, Math.min(label.length * 10 + 20, cellW - 16), labelH, 6);
+                ctx.fill();
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 13px sans-serif";
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.fillText(label, x + 16, y + cellH - labelH / 2 - 8);
             });
 
             // Recording indicator
             ctx.fillStyle = "#ef4444";
             ctx.beginPath();
-            ctx.arc(canvas.width - 24, 24, 8, 0, Math.PI * 2);
+            ctx.arc(WIDTH - 30, 30, 8, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = "#fff";
-            ctx.font = "bold 12px Inter, sans-serif";
-            ctx.fillText("REC", canvas.width - 60, 29);
+            ctx.font = "bold 14px sans-serif";
+            ctx.textAlign = "right";
+            ctx.textBaseline = "middle";
+            ctx.fillText("REC", WIDTH - 46, 30);
 
-            animFrameRef.current = requestAnimationFrame(draw);
+            // Timestamp
+            ctx.fillStyle = "rgba(255,255,255,0.5)";
+            ctx.font = "12px sans-serif";
+            ctx.textAlign = "right";
+            ctx.fillText(new Date().toLocaleTimeString(), WIDTH - 20, HEIGHT - 16);
+
+            animFrameRef.current = requestAnimationFrame(drawFrame);
         }
-        draw();
 
-        // ── 4. Mix all audio tracks via AudioContext ──
+        drawFrame();
+
+        // ── Mix audio from all streams ──
         const audioCtx = new AudioContext();
-        audioCtxRef.current = audioCtx;
         const dest = audioCtx.createMediaStreamDestination();
-
-        for (const s of validStreams) {
-            const audioTracks = s.stream!.getAudioTracks();
+        streams.forEach(({ stream }) => {
+            const audioTracks = stream.getAudioTracks();
             if (audioTracks.length > 0) {
-                const source = audioCtx.createMediaStreamSource(new MediaStream(audioTracks));
-                source.connect(dest);
+                const src = audioCtx.createMediaStreamSource(new MediaStream(audioTracks));
+                src.connect(dest);
             }
+        });
+
+        // ── Combine canvas video + mixed audio ──
+        const canvasStream = canvas.captureStream(30); // 30 FPS
+        const audioTracks = dest.stream.getAudioTracks();
+        if (audioTracks.length > 0) {
+            canvasStream.addTrack(audioTracks[0]);
         }
 
-        // ── 5. Combine canvas video + mixed audio ──
-        const canvasStream = canvas.captureStream(30); // 30fps
-        const combinedStream = new MediaStream([
-            ...canvasStream.getVideoTracks(),
-            ...dest.stream.getAudioTracks(),
-        ]);
+        // ── MediaRecorder ──
+        let mimeType = "video/webm";
+        if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")) {
+            mimeType = "video/webm;codecs=vp9,opus";
+        } else if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")) {
+            mimeType = "video/webm;codecs=vp8,opus";
+        }
 
-        // ── 6. Start MediaRecorder ──
-        const recorder = new MediaRecorder(combinedStream, {
-            mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-                ? "video/webm;codecs=vp9,opus"
-                : "video/webm",
-            videoBitsPerSecond: 2500000, // 2.5 Mbps
+        const recorder = new MediaRecorder(canvasStream, {
+            mimeType,
+            videoBitsPerSecond: 5_000_000,
         });
 
         chunksRef.current = [];
+
         recorder.ondataavailable = (e) => {
             if (e.data.size > 0) chunksRef.current.push(e.data);
         };
+
         recorder.onstop = () => {
-            // Clean up
+            // Cleanup
             cancelAnimationFrame(animFrameRef.current);
-            videoElements.forEach(v => { v.pause(); v.srcObject = null; });
+            videoElems.forEach(v => { v.srcObject = null; });
             audioCtx.close().catch(() => { });
 
-            // Download
-            const blob = new Blob(chunksRef.current, { type: "video/webm" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `meeting-${roomId.slice(0, 8)}-${new Date().toISOString().slice(0, 16).replace("T", "_")}.webm`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            if (chunksRef.current.length === 0) return;
+            const blob = new Blob(chunksRef.current, { type: mimeType });
+
+            // Auto-download the recording
+            downloadBlob(blob, `OneStudios-${roomId.slice(0, 8)}-${Date.now()}.webm`);
         };
 
         recorder.start(1000);
         mediaRecorderRef.current = recorder;
         setIsRecording(true);
-    }, [roomId]);
+    }, [isRecording, roomId]);
 
     const stopRecording = useCallback(() => {
-        mediaRecorderRef.current?.stop();
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+            mediaRecorderRef.current.stop();
+        }
+        mediaRecorderRef.current = null;
         setIsRecording(false);
     }, []);
 
-    const toggleRecording = useCallback((streams: RecordingStream[]) => {
-        if (isRecording) {
-            stopRecording();
-        } else {
-            startRecording(streams);
-        }
-    }, [isRecording, startRecording, stopRecording]);
+    return { isRecording, startRecording, stopRecording };
+}
 
-    return { isRecording, toggleRecording, stopRecording };
+/**
+ * Download a recording blob as a file.
+ */
+export function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }

@@ -35,7 +35,7 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
         endCall,
     } = useGroupWebRTC(roomId);
 
-    const { isRecording, toggleRecording, stopRecording } = useRecording(roomId);
+    const { isRecording, startRecording, stopRecording } = useRecording(roomId, localUsername);
 
     const [time, setTime] = useState(0);
     const [viewMode, setViewMode] = useState<ViewMode>("gallery");
@@ -75,19 +75,21 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
         if (!showChat) setUnreadCount(0);
     };
 
-    // ── Recording with canvas compositing ──
+    // ── Canvas Composite Recording ──
     const handleToggleRecording = () => {
-        const willRecord = !isRecording;
-        const streams = [
-            { stream: localStream, label: localUsername },
-            ...remotePeers.filter(p => !p.isScreen).map(p => ({
-                stream: p.stream, label: p.userId,
-            })),
-        ];
-        toggleRecording(streams);
-
-        // Notify all other participants
-        sendSignal({ type: "recording-status", isRecording: willRecord });
+        if (isRecording) {
+            stopRecording();
+            sendSignal({ type: "recording-status", isRecording: false });
+        } else {
+            // Collect ALL streams: local + all remote peers
+            const streams: { stream: MediaStream; label: string }[] = [];
+            if (localStream) streams.push({ stream: localStream, label: localUsername || "You" });
+            remotePeers.forEach(p => {
+                if (p.stream) streams.push({ stream: p.stream, label: p.userId });
+            });
+            startRecording(streams);
+            sendSignal({ type: "recording-status", isRecording: true });
+        }
     };
 
     const leaveRoom = () => {

@@ -17,6 +17,8 @@ const ICE_SERVERS: RTCConfiguration = {
 export type CallState = "idle" | "joining" | "connected" | "disconnected" | "error";
 
 // ─── Hook ───────────────────────────────────────────────
+export type ReceivedRecording = { name: string; blob: Blob; size: number; receivedAt: number };
+
 export function useWebRTC(roomId: string) {
     const [callState, setCallState] = useState<CallState>("idle");
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -30,6 +32,7 @@ export function useWebRTC(roomId: string) {
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [chatMessages, setChatMessages] = useState<{ id: string; sender: string; text: string; timestamp: number; isLocal?: boolean }[]>([]);
     const [remoteRecording, setRemoteRecording] = useState<{ isRecording: boolean; recorder: string } | null>(null);
+    const [receivedRecordings, setReceivedRecordings] = useState<ReceivedRecording[]>([]);
 
     // All mutable state lives in refs to avoid dependency cycles
     const socketRef = useRef<WebSocket | null>(null);
@@ -39,6 +42,8 @@ export function useWebRTC(roomId: string) {
     const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
     const cleanedUpRef = useRef(false);
     const effectIdRef = useRef(0);
+    const dataChannelRef = useRef<RTCDataChannel | null>(null);
+    const incomingChunksRef = useRef<{ [key: string]: ArrayBuffer[] }>({});
 
     useEffect(() => {
         if (!roomId) return;
@@ -58,6 +63,43 @@ export function useWebRTC(roomId: string) {
         let pendingCandidates: RTCIceCandidate[] = [];
 
         // ── Helpers (defined inside effect to avoid dependency issues) ──
+
+        // ── DataChannel handler for recording chunks ──
+        function setupDataChannelHandlers(dc: RTCDataChannel) {
+            dc.binaryType = "arraybuffer";
+            let metaInfo: { name: string; totalChunks: number; totalSize: number } | null = null;
+
+            dc.onmessage = (evt) => {
+                if (typeof evt.data === "string") {
+                    // JSON control messages
+                    const msg = JSON.parse(evt.data);
+                    if (msg.type === "recording-meta") {
+                        metaInfo = { name: msg.name, totalChunks: msg.totalChunks, totalSize: msg.totalSize };
+                        incomingChunksRef.current[msg.name] = [];
+                    } else if (msg.type === "recording-done") {
+                        // All chunks received → assemble blob
+                        const chunks = incomingChunksRef.current[msg.name];
+                        if (chunks && metaInfo) {
+                            const blob = new Blob(chunks, { type: "video/webm" });
+                            setReceivedRecordings(prev => [...prev, {
+                                name: msg.name,
+                                blob,
+                                size: blob.size,
+                                receivedAt: Date.now(),
+                            }]);
+                            delete incomingChunksRef.current[msg.name];
+                            console.log(`[REC] Received recording from ${msg.name}: ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+                        }
+                        metaInfo = null;
+                    }
+                } else {
+                    // Binary chunk
+                    if (metaInfo) {
+                        incomingChunksRef.current[metaInfo.name]?.push(evt.data as ArrayBuffer);
+                    }
+                }
+            };
+        }
 
         function createPC(targetPeerId?: string): RTCPeerConnection {
             // Always close old PC first
@@ -90,6 +132,20 @@ export function useWebRTC(roomId: string) {
                 console.log("[RTC] connectionState:", s);
                 if (s === "connected") setCallState("connected");
                 if (s === "failed") setCallState("disconnected");
+            };
+
+            // ── DataChannel for P2P recording transfer ──
+            // Offerer creates channel, answerer listens for it
+            const dc = newPc.createDataChannel("recording", { ordered: true });
+            dc.onopen = () => { console.log("[DC] recording channel opened (offerer)"); };
+            setupDataChannelHandlers(dc);
+            dataChannelRef.current = dc;
+
+            newPc.ondatachannel = (evt) => {
+                console.log("[DC] recording channel opened (answerer)");
+                const remoteDc = evt.channel;
+                setupDataChannelHandlers(remoteDc);
+                dataChannelRef.current = remoteDc;
             };
 
             // Add local tracks
@@ -496,6 +552,53 @@ export function useWebRTC(roomId: string) {
         socketRef.current.send(JSON.stringify(data));
     };
 
+    /**
+     * Send a recording blob to the remote peer via DataChannel.
+     * Chunks the blob into 64KB pieces and sends meta → chunks → done.
+     */
+    const sendRecordingBlob = async (blob: Blob, senderName: string) => {
+        const dc = dataChannelRef.current;
+        if (!dc || dc.readyState !== "open") {
+            console.warn("[DC] DataChannel not open, cannot send recording");
+            return false;
+        }
+
+        const CHUNK_SIZE = 64 * 1024; // 64KB
+        const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
+
+        // 1. Send metadata
+        dc.send(JSON.stringify({
+            type: "recording-meta",
+            name: senderName,
+            totalChunks,
+            totalSize: blob.size,
+        }));
+
+        // 2. Send binary chunks with flow control
+        const arrayBuffer = await blob.arrayBuffer();
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, blob.size);
+            const chunk = arrayBuffer.slice(start, end);
+
+            // Wait if buffered amount is too high (back-pressure)
+            while (dc.bufferedAmount > 1024 * 1024) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            dc.send(chunk);
+        }
+
+        // 3. Send done signal
+        dc.send(JSON.stringify({
+            type: "recording-done",
+            name: senderName,
+        }));
+
+        console.log(`[DC] Sent recording: ${senderName} (${(blob.size / 1024 / 1024).toFixed(1)} MB, ${totalChunks} chunks)`);
+        return true;
+    };
+
     return {
         callState,
         localStream,
@@ -511,11 +614,13 @@ export function useWebRTC(roomId: string) {
         errorMessage,
         chatMessages,
         remoteRecording,
+        receivedRecordings,
         toggleAudio,
         toggleVideo,
         toggleScreenShare,
         sendChatMessage,
         sendSignal,
+        sendRecordingBlob,
         endCall,
     };
 }

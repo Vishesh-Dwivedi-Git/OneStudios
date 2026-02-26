@@ -33,7 +33,7 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         endCall,
     } = useWebRTC(roomId);
 
-    const { isRecording, toggleRecording, stopRecording } = useRecording(roomId);
+    const { isRecording, startRecording, stopRecording } = useRecording(roomId, "You");
 
     const [time, setTime] = useState(0);
     const [inviteCode, setInviteCode] = useState<string | undefined>();
@@ -67,17 +67,19 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
         if (!showChat) setUnreadCount(0);
     };
 
-    // ── Recording with canvas compositing ──
+    // ── Canvas Composite Recording ──
     const handleToggleRecording = () => {
-        const willRecord = !isRecording;
-        const streams = [
-            { stream: localStream, label: "You" },
-            { stream: remoteStream, label: "Remote" },
-        ];
-        toggleRecording(streams);
-
-        // Notify remote participant about recording status
-        sendSignal({ type: "recording-status", isRecording: willRecord });
+        if (isRecording) {
+            stopRecording();
+            sendSignal({ type: "recording-status", isRecording: false });
+        } else {
+            // Collect all available streams
+            const streams: { stream: MediaStream; label: string }[] = [];
+            if (localStream) streams.push({ stream: localStream, label: "You" });
+            if (remoteStream) streams.push({ stream: remoteStream, label: "Remote" });
+            startRecording(streams);
+            sendSignal({ type: "recording-status", isRecording: true });
+        }
     };
 
     const formatTime = (seconds: number) => {
