@@ -220,6 +220,8 @@ export function registerWebRtcHandlers(router: {
       sender: ctx.username || ctx.userId.slice(0, 8),
       text: message.text,
       timestamp: Date.now(),
+      messageType: message.messageType || "text",
+      imageData: message.imageData,
     });
   });
 

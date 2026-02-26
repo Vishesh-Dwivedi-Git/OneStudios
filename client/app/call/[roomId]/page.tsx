@@ -250,16 +250,23 @@ export default function CallPage({ params }: { params: Promise<{ roomId: string 
                     )}
                 </main>
 
-                {/* Chat Panel */}
+                {/* Chat Panel — full overlay on mobile, sidebar on desktop */}
                 {showChat && (
-                    <aside className="w-80 shrink-0 h-full border-l border-border animate-in slide-in-from-right-10 duration-300">
-                        <ChatPanel
-                            messages={chatMessages}
-                            onSend={sendChatMessage}
-                            onClose={toggleChat}
-                            localUsername="You"
+                    <>
+                        {/* Mobile backdrop */}
+                        <div
+                            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 md:hidden"
+                            onClick={toggleChat}
                         />
-                    </aside>
+                        <div className="fixed inset-0 z-50 md:relative md:inset-auto md:z-auto md:w-80 md:shrink-0 md:h-full md:border-l md:border-border animate-in slide-in-from-right-10 duration-300">
+                            <ChatPanel
+                                messages={chatMessages}
+                                onSend={sendChatMessage}
+                                onClose={toggleChat}
+                                localUsername="You"
+                            />
+                        </div>
+                    </>
                 )}
             </div>
 

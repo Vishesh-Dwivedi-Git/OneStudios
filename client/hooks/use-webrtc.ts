@@ -266,6 +266,8 @@ export function useWebRTC(roomId: string) {
                             text: msg.text,
                             timestamp: msg.timestamp,
                             isLocal: false,
+                            messageType: msg.messageType || "text",
+                            imageData: msg.imageData,
                         }]);
                         break;
 
@@ -535,15 +537,17 @@ export function useWebRTC(roomId: string) {
         }
     };
 
-    const sendChatMessage = (text: string) => {
+    const sendChatMessage = (text: string, messageType?: "text" | "image", imageData?: string) => {
         if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
-        socketRef.current.send(JSON.stringify({ type: "chat-message", text }));
+        socketRef.current.send(JSON.stringify({ type: "chat-message", text, messageType: messageType || "text", imageData }));
         setChatMessages(prev => [...prev, {
             id: `${Date.now()}-${Math.random()}`,
             sender: "You",
             text,
             timestamp: Date.now(),
             isLocal: true,
+            messageType: messageType || "text",
+            imageData,
         }]);
     };
 

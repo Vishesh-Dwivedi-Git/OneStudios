@@ -392,6 +392,8 @@ export function useGroupWebRTC(roomId: string) {
                                 text: msg.text,
                                 timestamp: msg.timestamp,
                                 isLocal: false,
+                                messageType: msg.messageType || "text",
+                                imageData: msg.imageData,
                             }]);
                             break;
 
@@ -537,15 +539,17 @@ export function useGroupWebRTC(roomId: string) {
         toggleScreenShareRef.current = toggleScreenShare;
     }, [toggleScreenShare]);
 
-    const sendChatMessage = useCallback((text: string) => {
+    const sendChatMessage = useCallback((text: string, messageType?: "text" | "image", imageData?: string) => {
         if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
-        send({ type: "chat-message", text });
+        send({ type: "chat-message", text, messageType: messageType || "text", imageData });
         setChatMessages(prev => [...prev, {
             id: `${Date.now()}-${Math.random()}`,
             sender: localUsername || "You",
             text,
             timestamp: Date.now(),
             isLocal: true,
+            messageType: messageType || "text",
+            imageData,
         }]);
     }, [send, localUsername]);
 
