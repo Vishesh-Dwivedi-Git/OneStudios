@@ -8,7 +8,7 @@ export type ConnContext = {
 	peerId: string;
 	userId: string;
 	roomId: string | null;
-	role: "HOST" | "PARTICIPANT" | null;
+	role: "HOST" | "CO_HOST" | "PARTICIPANT" | "VIEWER" | null;
 };
 
 export type MessageHandler = (ctx: ConnContext, message: any) => void | Promise<void>;

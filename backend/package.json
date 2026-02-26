@@ -36,6 +36,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "mediasoup": "^3.19.17",
     "passport": "^0.7.0",
     "passport-discord-auth": "^1.2.0",
     "passport-google-oauth20": "^2.0.0",

@@ -13,18 +13,75 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─── ENUMS ──────────────────────────────────────────────
+
+// What kind of meeting this room represents.
+// ONE_TO_ONE  → max 2 peers, single RTCPeerConnection
+// GROUP       → N peers, mesh or SFU topology  
+// VIRTUAL_ROOM → 3D immersive meeting space with avatars
+enum RoomType {
+  ONE_TO_ONE
+  GROUP
+  VIRTUAL_ROOM
+}
+
+// Participant permission levels within a room.
+// HOST        → creator, full control (mute/kick/end)
+// CO_HOST     → delegated host powers (moderate participants)
+// PARTICIPANT → full voice/video but no admin powers
+// VIEWER      → watch-only (can request to speak)
+enum RoomRole {
+  HOST
+  CO_HOST
+  PARTICIPANT
+  VIEWER
+}
+
+// Lifecycle state of a recording upload.
+// PROCESSING → client is uploading or server is transcoding
+// READY      → available for playback/download
+// FAILED     → upload or transcoding failed
+enum RecordingStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+// How the presentation content is being shared.
+// SCREEN_SHARE → live screen via getDisplayMedia()
+// SLIDE_DECK   → uploaded slides synced across participants
+enum PresentationType {
+  SCREEN_SHARE
+  SLIDE_DECK
+}
+
+// Type of chat message for UI rendering.
+// TEXT          → normal user message
+// SYSTEM        → auto-generated (join/leave events)
+// AI_SUGGESTION → posted by the AI meeting agent
+enum MessageType {
+  TEXT
+  SYSTEM
+  AI_SUGGESTION
+}
+
+
+// ─── MODELS ─────────────────────────────────────────────
 
 model User {
   id        String  @id @default(uuid())
   username  String  @unique
   email     String  @unique
   password  String
+  avatar    String?                       // Profile picture URL (shown in calls, chat, 3D avatar)
   createdAt DateTime @default(now())
 
-
-  refreshTokens RefreshToken[]
-  roomsHosted Room[]             @relation("RoomHost")
-  participations RoomParticipant[]
+  refreshTokens   RefreshToken[]
+  roomsHosted     Room[]             @relation("RoomHost")
+  participations  RoomParticipant[]
+  recordings      Recording[]
+  presentations   Presentation[]
+  chatMessages    ChatMessage[]
 }
 
 model RefreshToken {
@@ -37,18 +94,34 @@ model RefreshToken {
 }
 
 model Room {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
+  id              String    @id @default(uuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt          // Auto-tracks last modification
+
+  name            String?                       // Human-readable name ("Sprint Planning")
+  type            RoomType  @default(ONE_TO_ONE) // Determines UI + backend constraints
+  isActive        Boolean   @default(true)       // false when meeting ends
+  maxParticipants Int       @default(2)          // Enforced per room type
+  scheduledAt     DateTime?                      // If set, this is a future meeting
+  endedAt         DateTime?                      // Timestamp when host ended the meeting
+  inviteCode      String    @unique @default(uuid()) // Shareable join code (e.g. /join/ABC123)
 
   hostId String
   host   User @relation("RoomHost", fields: [hostId], references: [id])
 
-  participants RoomParticipant[]
+  participants  RoomParticipant[]
+  recordings    Recording[]
+  presentations Presentation[]
+  chatMessages  ChatMessage[]
+
+  @@index([inviteCode])
+  @@index([hostId])
+  @@index([isActive])
 }
 
 model RoomParticipant {
-  id        String   @id @default(uuid())
-  joinedAt  DateTime @default(now())
+  id        String    @id @default(uuid())
+  joinedAt  DateTime  @default(now())
   leftAt    DateTime?
 
   role   RoomRole
@@ -63,7 +136,57 @@ model RoomParticipant {
   @@index([userId])
 }
 
-enum RoomRole {
-  HOST
-  PARTICIPANT
+// Each recording is tied to a specific room + the user who initiated it.
+// A single room can have multiple recordings (start/stop multiple times,
+// or multiple users recording simultaneously).
+model Recording {
+  id        String          @id @default(uuid())
+  roomId    String
+  room      Room            @relation(fields: [roomId], references: [id])
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  filename  String                                // Storage path or object key
+  duration  Int?                                   // Duration in seconds
+  fileSize  Int?                                   // Size in bytes
+  mimeType  String          @default("video/webm")
+  status    RecordingStatus @default(PROCESSING)
+  createdAt DateTime        @default(now())
+
+  @@index([roomId])
+  @@index([userId])
+}
+
+// Tracks screen shares and slide presentations within a room.
+// isActive is enforced to be unique per room — only one active at a time.
+model Presentation {
+  id        String           @id @default(uuid())
+  roomId    String
+  room      Room             @relation(fields: [roomId], references: [id])
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  title     String?
+  type      PresentationType @default(SCREEN_SHARE)
+  isActive  Boolean          @default(false)
+  startedAt DateTime         @default(now())
+  endedAt   DateTime?
+
+  @@index([roomId])
+  @@index([userId])
+}
+
+// In-call chat messages, persisted so users can review after meeting ends.
+// AI agent suggestions are stored here too with isAI=true + type=AI_SUGGESTION.
+model ChatMessage {
+  id        String      @id @default(uuid())
+  roomId    String
+  room      Room        @relation(fields: [roomId], references: [id])
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  content   String
+  type      MessageType @default(TEXT)
+  isAI      Boolean     @default(false)
+  createdAt DateTime    @default(now())
+
+  @@index([roomId])
+  @@index([createdAt])
 }
