@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { apiRequest } from "@/lib/api";
 import * as mediasoupClient from "mediasoup-client";
+import { useVirtualBackground, BackgroundMode } from "./use-virtual-background";
 
 // ─── Constants ──────────────────────────────────────────
 const WS_URL = "ws://localhost:5000";
@@ -23,6 +24,7 @@ export interface RemotePeer {
 export function useGroupWebRTC(roomId: string) {
     const [callState, setCallState] = useState<GroupCallState>("idle");
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const [rawVideoTrack, setRawVideoTrack] = useState<MediaStreamTrack | null>(null);
     const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([]);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
@@ -32,6 +34,23 @@ export function useGroupWebRTC(roomId: string) {
     const [remoteRecording, setRemoteRecording] = useState<{ isRecording: boolean; recorder: string } | null>(null);
     const [participantCount, setParticipantCount] = useState(1);
     const [localUsername, setLocalUsername] = useState<string>("You");
+    const [incomingReaction, setIncomingReaction] = useState<{ emoji: string; sender: string } | null>(null);
+    const [incomingDrawPoint, setIncomingDrawPoint] = useState<any>(null);
+    const [incomingClear, setIncomingClear] = useState(false);
+    const [incomingE2EKey, setIncomingE2EKey] = useState<JsonWebKey | null>(null);
+
+    const {
+        processedTrack,
+        backgroundMode,
+        setBackgroundMode,
+        backgroundImageUrl,
+        setBackgroundImageUrl,
+    } = useVirtualBackground(rawVideoTrack);
+
+    const setVirtualBackground = useCallback((mode: BackgroundMode, url?: string) => {
+        setBackgroundMode(mode);
+        if (url) setBackgroundImageUrl(url);
+    }, [setBackgroundMode, setBackgroundImageUrl]);
 
     const socketRef = useRef<WebSocket | null>(null);
     const deviceRef = useRef<mediasoupClient.Device | null>(null);
@@ -287,6 +306,8 @@ export function useGroupWebRTC(roomId: string) {
                 }
 
                 localStreamRef.current = stream;
+                const vidTrack = stream.getVideoTracks()[0] || null;
+                setRawVideoTrack(vidTrack);
                 setLocalStream(stream);
 
                 // 3. Get WebSocket auth token
@@ -399,6 +420,23 @@ export function useGroupWebRTC(roomId: string) {
 
                         case "recording-status":
                             setRemoteRecording(msg.isRecording ? { isRecording: true, recorder: msg.recorder } : null);
+                            break;
+
+                        case "emoji-reaction":
+                            setIncomingReaction({ emoji: msg.emoji, sender: msg.sender });
+                            break;
+
+                        case "whiteboard-draw":
+                            setIncomingDrawPoint(msg.point);
+                            break;
+
+                        case "whiteboard-clear":
+                            setIncomingClear(true);
+                            setTimeout(() => setIncomingClear(false), 100);
+                            break;
+
+                        case "e2e-public-key":
+                            setIncomingE2EKey(msg.publicKeyJwk);
                             break;
 
                         case "error":
@@ -557,6 +595,22 @@ export function useGroupWebRTC(roomId: string) {
         send(data);
     }, [send]);
 
+    const sendReaction = useCallback((emoji: string) => {
+        send({ type: "emoji-reaction", emoji });
+    }, [send]);
+
+    const sendWhiteboardDraw = useCallback((point: any) => {
+        send({ type: "whiteboard-draw", point });
+    }, [send]);
+
+    const sendWhiteboardClear = useCallback(() => {
+        send({ type: "whiteboard-clear" });
+    }, [send]);
+
+    const sendE2EPublicKey = useCallback((publicKeyJwk: JsonWebKey) => {
+        send({ type: "e2e-public-key", publicKeyJwk });
+    }, [send]);
+
     return {
         callState,
         localStream,
@@ -569,11 +623,22 @@ export function useGroupWebRTC(roomId: string) {
         errorMessage,
         chatMessages,
         remoteRecording,
+        incomingReaction,
+        incomingDrawPoint,
+        incomingClear,
+        incomingE2EKey,
         toggleAudio,
         toggleVideo,
         toggleScreenShare,
         sendChatMessage,
+        sendReaction,
+        sendWhiteboardDraw,
+        sendWhiteboardClear,
+        sendE2EPublicKey,
         sendSignal,
         endCall,
+        bgMode: backgroundMode,
+        bgUrl: backgroundImageUrl,
+        setVirtualBackground,
     };
 }

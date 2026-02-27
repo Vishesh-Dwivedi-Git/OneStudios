@@ -1,6 +1,7 @@
 import express from "express";
 import authRoutes from "./routes/auth.routes.js"
 import roomRoutes from "./routes/room.routes.js"
+import aiRoutes from "./routes/ai.routes.js"
 import cookieParser from "cookie-parser"
 import cors from "cors";
 import passport from "./lib/passport.js";
@@ -9,7 +10,7 @@ import passport from "./lib/passport.js";
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(cors({
   origin: "http://localhost:3000",
@@ -19,6 +20,7 @@ app.use(passport.initialize());
 
 app.use("/auth", authRoutes);
 app.use("/rooms", roomRoutes);
+app.use("/ai", aiRoutes);
 app.use("/", (req, res) => {
   res.send("Welcome to the API!");
 });

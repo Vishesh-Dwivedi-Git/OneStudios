@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { apiRequest } from "@/lib/api";
+import { useVirtualBackground, BackgroundMode } from "./use-virtual-background";
 
 // ─── Constants ──────────────────────────────────────────
 const WS_URL = "ws://localhost:5000";
@@ -22,6 +23,7 @@ export type ReceivedRecording = { name: string; blob: Blob; size: number; receiv
 export function useWebRTC(roomId: string) {
     const [callState, setCallState] = useState<CallState>("idle");
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const [rawVideoTrack, setRawVideoTrack] = useState<MediaStreamTrack | null>(null);
     const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
@@ -33,6 +35,23 @@ export function useWebRTC(roomId: string) {
     const [chatMessages, setChatMessages] = useState<{ id: string; sender: string; text: string; timestamp: number; isLocal?: boolean }[]>([]);
     const [remoteRecording, setRemoteRecording] = useState<{ isRecording: boolean; recorder: string } | null>(null);
     const [receivedRecordings, setReceivedRecordings] = useState<ReceivedRecording[]>([]);
+    const [incomingReaction, setIncomingReaction] = useState<{ emoji: string; sender: string } | null>(null);
+    const [incomingDrawPoint, setIncomingDrawPoint] = useState<any>(null);
+    const [incomingClear, setIncomingClear] = useState(false);
+    const [incomingE2EKey, setIncomingE2EKey] = useState<JsonWebKey | null>(null);
+
+    const {
+        processedTrack,
+        backgroundMode,
+        setBackgroundMode,
+        backgroundImageUrl,
+        setBackgroundImageUrl,
+    } = useVirtualBackground(rawVideoTrack);
+
+    const setVirtualBackground = useCallback((mode: BackgroundMode, url?: string) => {
+        setBackgroundMode(mode);
+        if (url) setBackgroundImageUrl(url);
+    }, [setBackgroundMode, setBackgroundImageUrl]);
 
     // All mutable state lives in refs to avoid dependency cycles
     const socketRef = useRef<WebSocket | null>(null);
@@ -271,8 +290,25 @@ export function useWebRTC(roomId: string) {
                         }]);
                         break;
 
+                    case "emoji-reaction":
+                        setIncomingReaction({ emoji: msg.emoji, sender: msg.sender });
+                        break;
+
                     case "recording-status":
                         setRemoteRecording(msg.isRecording ? { isRecording: true, recorder: msg.recorder } : null);
+                        break;
+
+                    case "whiteboard-draw":
+                        setIncomingDrawPoint(msg.point);
+                        break;
+
+                    case "whiteboard-clear":
+                        setIncomingClear(true);
+                        setTimeout(() => setIncomingClear(false), 100);
+                        break;
+
+                    case "e2e-public-key":
+                        setIncomingE2EKey(msg.publicKeyJwk);
                         break;
 
                     case "error":
@@ -319,7 +355,9 @@ export function useWebRTC(roomId: string) {
                 }
 
                 localStreamRef.current = stream;
-                cameraTrackRef.current = stream.getVideoTracks()[0] || null;
+                const vidTrack = stream.getVideoTracks()[0] || null;
+                cameraTrackRef.current = vidTrack;
+                setRawVideoTrack(vidTrack);
                 setLocalStream(stream);
 
                 // 3. Get WebSocket auth token (cookies may not be sent cross-origin)
@@ -396,6 +434,28 @@ export function useWebRTC(roomId: string) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roomId]); // ONLY re-run when roomId changes
+
+    // ── Apply Virtual Background Track Changes ──
+    useEffect(() => {
+        if (!processedTrack || !localStreamRef.current) return;
+
+        const stream = localStreamRef.current;
+        const currentVideoTrack = stream.getVideoTracks()[0];
+
+        if (currentVideoTrack && currentVideoTrack !== processedTrack) {
+            stream.removeTrack(currentVideoTrack);
+            stream.addTrack(processedTrack);
+
+            // Re-assign stream to trigger react render
+            setLocalStream(new MediaStream(stream.getTracks()));
+
+            // Replace in RTCPeerConnection if active
+            const sender = pcRef.current?.getSenders().find(s => s.track?.kind === "video");
+            if (sender) {
+                sender.replaceTrack(processedTrack).catch(e => console.error("replaceTrack error:", e));
+            }
+        }
+    }, [processedTrack]);
 
     // ── Controls ──
     // Use refs to avoid stale closure issues when sending mute-state
@@ -603,6 +663,26 @@ export function useWebRTC(roomId: string) {
         return true;
     };
 
+    const sendReaction = (emoji: string) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify({ type: "emoji-reaction", emoji }));
+    };
+
+    const sendWhiteboardDraw = (point: any) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify({ type: "whiteboard-draw", point }));
+    };
+
+    const sendWhiteboardClear = () => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify({ type: "whiteboard-clear" }));
+    };
+
+    const sendE2EPublicKey = (publicKeyJwk: JsonWebKey) => {
+        if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+        socketRef.current.send(JSON.stringify({ type: "e2e-public-key", publicKeyJwk }));
+    };
+
     return {
         callState,
         localStream,
@@ -619,12 +699,23 @@ export function useWebRTC(roomId: string) {
         chatMessages,
         remoteRecording,
         receivedRecordings,
+        incomingReaction,
+        incomingDrawPoint,
+        incomingClear,
+        incomingE2EKey,
         toggleAudio,
         toggleVideo,
         toggleScreenShare,
         sendChatMessage,
+        sendReaction,
+        sendWhiteboardDraw,
+        sendWhiteboardClear,
+        sendE2EPublicKey,
         sendSignal,
         sendRecordingBlob,
         endCall,
+        bgMode: backgroundMode,
+        bgUrl: backgroundImageUrl,
+        setVirtualBackground,
     };
 }

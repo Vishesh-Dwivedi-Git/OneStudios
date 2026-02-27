@@ -379,3 +379,98 @@ export const getUserRooms = async (req: Request, res: Response) => {
     return res.status(500).json({ error: "Failed to list rooms" });
   }
 };
+
+// ─── USER MEETING STATS ─────────────────────────────────
+// GET /rooms/stats
+// Returns personalized dashboard analytics
+export const getUserStats = async (req: Request, res: Response) => {
+  const userId = (req as any).userId;
+
+  try {
+    // Get all rooms this user participated in
+    const rooms = await prisma.room.findMany({
+      where: {
+        OR: [
+          { hostId: userId },
+          { participants: { some: { userId } } },
+        ],
+      },
+      include: {
+        host: { select: { id: true, username: true } },
+        _count: { select: { participants: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const totalMeetings = rooms.length;
+    let totalDurationMs = 0;
+    const meetingsByType: Record<string, number> = {};
+    const dailyActivity: Record<string, number> = {};
+
+    // Compute stats from ALL rooms
+    const allMeetings = rooms.map((room) => {
+      let durationMs = 0;
+      if (room.endedAt) {
+        durationMs = Math.max(0, new Date(room.endedAt).getTime() - new Date(room.createdAt).getTime());
+        // Cap ended rooms to 4 hours in case of bad test data
+        durationMs = Math.min(durationMs, 4 * 60 * 60 * 1000);
+      } else if (room.isActive) {
+        const timeSinceCreation = Date.now() - new Date(room.createdAt).getTime();
+        // If a test room was left active for more than 4 hours, treat it as a zombie
+        // and assign a realistic 15-minute fallback duration.
+        if (timeSinceCreation > 4 * 60 * 60 * 1000) {
+          durationMs = 15 * 60 * 1000; // 15 mins
+        } else {
+          durationMs = timeSinceCreation;
+        }
+      }
+      totalDurationMs += durationMs;
+
+      // Count by type
+      meetingsByType[room.type] = (meetingsByType[room.type] || 0) + 1;
+
+      // Daily activity
+      const dayKey = new Date(room.createdAt).toISOString().split("T")[0];
+      dailyActivity[dayKey] = (dailyActivity[dayKey] || 0) + 1;
+
+      return {
+        id: room.id,
+        name: room.name,
+        type: room.type,
+        createdAt: room.createdAt,
+        endedAt: room.endedAt,
+        isActive: room.isActive,
+        durationMs,
+        participantCount: room._count.participants,
+        hostName: room.host.username,
+        isHost: room.hostId === userId,
+      };
+    });
+
+    // Only return top 20 for the list
+    const recentMeetings = allMeetings.slice(0, 20);
+
+    // Build daily activity for last 30 days
+    const last30Days: { date: string; count: number }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split("T")[0];
+      last30Days.push({ date: key, count: dailyActivity[key] || 0 });
+    }
+
+    const avgDurationMs = totalMeetings > 0 ? totalDurationMs / totalMeetings : 0;
+
+    return res.json({
+      totalMeetings,
+      totalDurationMs,
+      avgDurationMs,
+      meetingsByType,
+      recentMeetings,
+      dailyActivity: last30Days,
+    });
+  } catch (err) {
+    console.error("Failed to get user stats:", err);
+    return res.status(500).json({ error: "Failed to get stats" });
+  }
+};

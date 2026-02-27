@@ -225,6 +225,43 @@ export function registerWebRtcHandlers(router: {
     });
   });
 
+  // Forward emoji reactions
+  router.register("emoji-reaction", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "emoji-reaction",
+      emoji: message.emoji,
+      sender: ctx.username || ctx.userId.slice(0, 8),
+    });
+  });
+
+  // Forward whiteboard draw events
+  router.register("whiteboard-draw", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "whiteboard-draw",
+      point: message.point,
+    });
+  });
+
+  // Forward whiteboard clear events
+  router.register("whiteboard-clear", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "whiteboard-clear",
+    });
+  });
+
+  // Forward E2E encryption public key exchange
+  router.register("e2e-public-key", (ctx: ConnContext, message: any) => {
+    if (!ctx.roomId) return;
+    roomService.broadcastToRoomExcept(ctx.roomId, ctx.peerId, {
+      type: "e2e-public-key",
+      publicKeyJwk: message.publicKeyJwk,
+      sender: ctx.username || ctx.userId.slice(0, 8),
+    });
+  });
+
   // Broadcast recording status to all peers
   router.register("recording-status", (ctx: ConnContext, message: any) => {
     if (!ctx.roomId) return;
@@ -378,9 +415,13 @@ export function registerWebRtcHandlers(router: {
       } catch (e) { /* ignore */ }
     }
 
-    // If room is empty, clean up SFU router
+    // If room is empty, clean up SFU router and mark room as officially ended in DB
     if (remaining.length === 0) {
       sfuService.closeRoom(ctx.roomId);
+      void prisma.room.update({
+        where: { id: ctx.roomId },
+        data: { isActive: false, endedAt: new Date() },
+      }).catch((e) => console.error("Failed to mark room ended:", e));
     }
 
     // Update DB

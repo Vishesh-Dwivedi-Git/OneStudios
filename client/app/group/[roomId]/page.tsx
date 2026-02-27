@@ -2,13 +2,18 @@
 
 import { useGroupWebRTC } from "@/hooks/use-group-webrtc";
 import { useRecording } from "@/hooks/use-recording";
+import { useTranscription } from "@/hooks/use-transcription";
+import { useEncryption } from "@/hooks/use-encryption";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { CallControls } from "@/components/CallControls";
 import { ParticipantList } from "@/components/ParticipantList";
 import { ShareDialog } from "@/components/ShareDialog";
 import { ChatPanel } from "@/components/ChatPanel";
-import { useState, useEffect, use } from "react";
-import { Loader2, Users, Shield, Clock, LayoutGrid, Maximize, UserRound, Share2 } from "lucide-react";
+import { MeetingSummaryModal } from "@/components/MeetingSummaryModal";
+import { EmojiReactions } from "@/components/EmojiReactions";
+import { Whiteboard } from "@/components/Whiteboard";
+import { useState, useEffect, useCallback, useRef, use } from "react";
+import { Loader2, Users, Shield, Clock, LayoutGrid, Maximize, UserRound, Share2, Sparkles, PenTool, Lock } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 
 type ViewMode = "gallery" | "speaker";
@@ -30,12 +35,25 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
         errorMessage,
         chatMessages,
         remoteRecording,
+        incomingReaction,
+        incomingDrawPoint,
+        incomingClear,
         sendChatMessage,
+        sendReaction,
+        sendWhiteboardDraw,
+        sendWhiteboardClear,
+        sendE2EPublicKey,
+        incomingE2EKey,
         sendSignal,
         endCall,
+        bgMode,
+        bgUrl,
+        setVirtualBackground,
     } = useGroupWebRTC(roomId);
 
     const { isRecording, startRecording, stopRecording } = useRecording(roomId, localUsername);
+    const { isTranscribing, isSupported: speechSupported, transcript, currentText, startTranscription, stopTranscription, getRecentTranscript, getFullTranscript } = useTranscription();
+    const { isE2EReady, publicKeyJwk, initKeys, deriveSharedKey } = useEncryption();
 
     const [time, setTime] = useState(0);
     const [viewMode, setViewMode] = useState<ViewMode>("gallery");
@@ -44,11 +62,34 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
     const [showShare, setShowShare] = useState(false);
     const [showChat, setShowChat] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [showSummary, setShowSummary] = useState(false);
+    const [showCaptions, setShowCaptions] = useState(false);
+    const [showWhiteboard, setShowWhiteboard] = useState(false);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+    const lastSuggestTime = useRef(0);
 
     useEffect(() => {
         const timer = setInterval(() => setTime((p) => p + 1), 1000);
         return () => clearInterval(timer);
     }, []);
+
+    // E2E: init keys when connected, send public key
+    useEffect(() => {
+        if (callState === "connected") {
+            initKeys().then(jwk => {
+                if (jwk) sendE2EPublicKey(jwk);
+            });
+        }
+    }, [callState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // E2E: derive shared key when receiving remote public key
+    useEffect(() => {
+        if (incomingE2EKey) {
+            deriveSharedKey(incomingE2EKey);
+            if (publicKeyJwk) sendE2EPublicKey(publicKeyJwk);
+        }
+    }, [incomingE2EKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         apiRequest(`/rooms/${roomId}`, undefined, "GET")
@@ -74,6 +115,56 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
         setShowChat(prev => !prev);
         if (!showChat) setUnreadCount(0);
     };
+
+    // Start transcription from user gesture (required by browsers)
+    const ensureTranscription = useCallback(() => {
+        if (!isTranscribing && speechSupported) {
+            startTranscription(localUsername || "You");
+        }
+    }, [isTranscribing, speechSupported, startTranscription, localUsername]);
+
+    const toggleCaptions = useCallback(() => {
+        if (!showCaptions) ensureTranscription();
+        setShowCaptions(prev => !prev);
+    }, [showCaptions, ensureTranscription]);
+
+    // Auto-fetch suggestions when new transcript entries come in (throttled)
+    useEffect(() => {
+        if (transcript.length > 0 && transcript.length % 5 === 0) {
+            fetchSuggestions();
+        }
+    }, [transcript.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const fetchSuggestions = useCallback(async () => {
+        if (loadingSuggestions) return;
+        // Throttle: at most once every 30 seconds
+        const now = Date.now();
+        if (now - lastSuggestTime.current < 30000) return;
+        lastSuggestTime.current = now;
+        const recentText = getRecentTranscript(8);
+        if (!recentText) return;
+        setLoadingSuggestions(true);
+        try {
+            const data = await apiRequest("/ai/suggest", {
+                transcript: recentText,
+                lastSpeaker: transcript.length > 0 ? transcript[transcript.length - 1].speaker : "Unknown",
+            }, "POST");
+            setSuggestions(data.suggestions || []);
+        } catch {
+            setSuggestions([]);
+        }
+        setLoadingSuggestions(false);
+    }, [loadingSuggestions, getRecentTranscript, transcript]);
+
+    const handleRequestSuggestions = useCallback(() => {
+        ensureTranscription();
+        fetchSuggestions();
+    }, [ensureTranscription, fetchSuggestions]);
+
+    const handleAIClick = useCallback(() => {
+        ensureTranscription();
+        setShowSummary(true);
+    }, [ensureTranscription]);
 
     // ── Canvas Composite Recording ──
     const handleToggleRecording = () => {
@@ -184,6 +275,15 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
                         </div>
                     </div>
 
+                    {/* E2E badge */}
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${isE2EReady
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-muted/50 border-border text-muted-foreground'
+                        }`} title={isE2EReady ? 'End-to-end encrypted' : 'Establishing encryption...'}>
+                        <Lock size={12} />
+                        <span className="hidden sm:inline">{isE2EReady ? 'E2E' : '...'}</span>
+                    </div>
+
                     <div className="hidden md:flex items-center bg-muted/50 rounded-xl border border-border overflow-hidden">
                         <button onClick={() => setViewMode("gallery")} className={`p-2 transition-all ${viewMode === "gallery" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`} title="Gallery View"><LayoutGrid size={16} /></button>
                         <button onClick={() => setViewMode("speaker")} className={`p-2 transition-all ${viewMode === "speaker" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`} title="Speaker View"><Maximize size={16} /></button>
@@ -198,6 +298,33 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
                     >
                         <Share2 size={16} />
                         <span className="hidden sm:inline">Invite</span>
+                    </button>
+
+                    {/* AI Summary button — also starts transcription */}
+                    <button
+                        onClick={handleAIClick}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-all ${isTranscribing
+                            ? 'bg-gradient-to-r from-violet-500/20 to-purple-500/20 border-violet-500/40 text-violet-500'
+                            : 'bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20 text-violet-600 dark:text-violet-400'
+                            } hover:from-violet-500/20 hover:to-purple-500/20`}
+                        title={isTranscribing ? 'AI Listening — Click for Summary' : 'Start AI — Click to begin listening'}
+                    >
+                        {isTranscribing && <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
+                        <Sparkles size={16} />
+                        <span className="hidden sm:inline">{isTranscribing ? 'AI On' : 'AI'}</span>
+                    </button>
+
+                    {/* Whiteboard button */}
+                    <button
+                        onClick={() => setShowWhiteboard(prev => !prev)}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-all ${showWhiteboard
+                            ? 'bg-amber-500/20 border-amber-500/40 text-amber-500'
+                            : 'bg-muted/50 border-border text-foreground hover:bg-muted'
+                            }`}
+                        title="Whiteboard"
+                    >
+                        <PenTool size={16} />
+                        <span className="hidden sm:inline">Board</span>
                     </button>
                 </div>
             </header>
@@ -304,14 +431,28 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
                         isVideoOff={isVideoOff}
                         isScreenSharing={isScreenSharing}
                         isRecording={isRecording}
+                        isCaptionsOn={showCaptions}
                         unreadCount={unreadCount}
+                        bgMode={bgMode}
+                        bgUrl={bgUrl}
                         onToggleAudio={toggleAudio}
                         onToggleVideo={toggleVideo}
                         onToggleScreenShare={toggleScreenShare}
                         onToggleChat={toggleChat}
                         onToggleRecording={handleToggleRecording}
+                        onToggleCaptions={toggleCaptions}
+                        onSelectBg={setVirtualBackground}
                         onEndCall={leaveRoom}
                     />
+
+                    {/* Live Captions Overlay */}
+                    {showCaptions && currentText && (
+                        <div className="fixed bottom-28 left-1/2 -translate-x-1/2 z-40 max-w-xl w-[90%] pointer-events-none animate-in fade-in duration-200">
+                            <div className="bg-black/75 backdrop-blur-sm text-white text-center px-6 py-3 rounded-2xl shadow-lg">
+                                <p className="text-sm sm:text-base font-medium leading-relaxed">{currentText}</p>
+                            </div>
+                        </div>
+                    )}
 
                     {callState === "disconnected" && (
                         <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-destructive text-destructive-foreground px-4 py-2 rounded-full shadow-lg z-50 animate-bounce text-sm font-medium">
@@ -334,6 +475,10 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
                                 onSend={sendChatMessage}
                                 onClose={toggleChat}
                                 localUsername={localUsername}
+                                suggestions={suggestions}
+                                loadingSuggestions={loadingSuggestions}
+                                onRequestSuggestions={handleRequestSuggestions}
+                                currentTranscript={currentText}
                             />
                         </div>
                     </>
@@ -357,6 +502,28 @@ export default function GroupCallPage({ params }: { params: Promise<{ roomId: st
                     inviteCode={inviteCode}
                 />
             )}
+
+            <EmojiReactions
+                onSendReaction={sendReaction}
+                incomingReaction={incomingReaction}
+            />
+
+            <MeetingSummaryModal
+                isOpen={showSummary}
+                onClose={() => setShowSummary(false)}
+                transcript={getFullTranscript()}
+                duration={formatTime(time)}
+                participantCount={participantCount}
+            />
+
+            <Whiteboard
+                isOpen={showWhiteboard}
+                onClose={() => setShowWhiteboard(false)}
+                onDraw={sendWhiteboardDraw}
+                onClear={sendWhiteboardClear}
+                incomingDraw={incomingDrawPoint}
+                incomingClear={incomingClear}
+            />
         </div>
     );
 }

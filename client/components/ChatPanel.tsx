@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { X, Send, Smile, Paperclip, ChevronDown, Image as ImageIcon } from "lucide-react";
+import { X, Send, Smile, Paperclip, ChevronDown, Sparkles, Loader2 } from "lucide-react";
 
 // ── Types ──
 export interface ChatMessage {
@@ -19,6 +19,11 @@ interface ChatPanelProps {
     onSend: (text: string, messageType?: "text" | "image", imageData?: string) => void;
     onClose: () => void;
     localUsername: string;
+    // AI features
+    suggestions?: string[];
+    loadingSuggestions?: boolean;
+    onRequestSuggestions?: () => void;
+    currentTranscript?: string; // live speech-to-text
 }
 
 // ── Emoji Data ──
@@ -42,7 +47,7 @@ const emojiCategories = [
 ];
 
 // ── Component ──
-export function ChatPanel({ messages, onSend, onClose, localUsername }: ChatPanelProps) {
+export function ChatPanel({ messages, onSend, onClose, localUsername, suggestions, loadingSuggestions, onRequestSuggestions, currentTranscript }: ChatPanelProps) {
     const [input, setInput] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
     const [emojiCat, setEmojiCat] = useState(0);
@@ -231,6 +236,37 @@ export function ChatPanel({ messages, onSend, onClose, localUsername }: ChatPane
                 </button>
             )}
 
+            {/* ── AI Smart Replies ── */}
+            {(suggestions && suggestions.length > 0) && (
+                <div className="px-3 py-2 border-t border-border bg-violet-500/5 shrink-0">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                        <Sparkles size={12} className="text-violet-500" />
+                        <span className="text-[10px] font-semibold text-violet-500 uppercase tracking-wider">From meeting voice</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {suggestions.map((s, i) => (
+                            <button
+                                key={i}
+                                onClick={() => { onSend(s, "text"); }}
+                                className="px-3 py-1.5 rounded-full text-xs font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-all hover:scale-[1.02] active:scale-95"
+                            >
+                                {s}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* ── Live Transcript ── */}
+            {currentTranscript && (
+                <div className="px-3 py-1.5 border-t border-border bg-muted/20 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-[10px] text-muted-foreground italic truncate">{currentTranscript}</span>
+                    </div>
+                </div>
+            )}
+
             {/* ── Image Preview ── */}
             {imagePreview && (
                 <div className="px-3 py-2 border-t border-border bg-muted/30 shrink-0">
@@ -301,6 +337,18 @@ export function ChatPanel({ messages, onSend, onClose, localUsername }: ChatPane
                     >
                         <Paperclip size={18} />
                     </button>
+
+                    {/* AI suggest button */}
+                    {onRequestSuggestions && (
+                        <button
+                            onClick={onRequestSuggestions}
+                            disabled={loadingSuggestions}
+                            className={`p-1.5 rounded-lg transition-colors ${loadingSuggestions ? 'text-violet-500 animate-pulse' : 'text-muted-foreground hover:text-violet-500 hover:bg-violet-500/10'}`}
+                            title="AI suggest replies"
+                        >
+                            {loadingSuggestions ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                        </button>
+                    )}
                     <input
                         ref={fileInputRef}
                         type="file"

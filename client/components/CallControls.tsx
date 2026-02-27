@@ -1,18 +1,25 @@
 "use client";
 
-import { Mic, MicOff, Video, VideoOff, PhoneOff, ScreenShare, MessageSquare, Circle, MoreVertical } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, ScreenShare, MessageSquare, Circle, Subtitles } from "lucide-react";
+import { VirtualBackgroundSelector } from "./VirtualBackgroundSelector";
+import { BackgroundMode } from "@/hooks/use-virtual-background";
 
 interface CallControlsProps {
     isAudioMuted: boolean;
     isVideoOff: boolean;
     isScreenSharing?: boolean;
     isRecording?: boolean;
+    isCaptionsOn?: boolean;
     unreadCount?: number;
+    bgMode?: BackgroundMode;
+    bgUrl?: string;
     onToggleAudio: () => void;
     onToggleVideo: () => void;
     onToggleScreenShare?: () => void;
     onToggleChat?: () => void;
     onToggleRecording?: () => void;
+    onToggleCaptions?: () => void;
+    onSelectBg?: (mode: BackgroundMode, url?: string) => void;
     onEndCall: () => void;
 }
 
@@ -21,16 +28,22 @@ export function CallControls({
     isVideoOff,
     isScreenSharing,
     isRecording,
+    isCaptionsOn,
     unreadCount = 0,
+    bgMode = "none",
+    bgUrl = "",
     onToggleAudio,
     onToggleVideo,
     onToggleScreenShare,
     onToggleChat,
     onToggleRecording,
+    onToggleCaptions,
+    onSelectBg,
     onEndCall,
 }: CallControlsProps) {
     return (
-        <div className={`fixed bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-3.5 rounded-2xl sm:rounded-3xl bg-background/80 backdrop-blur-2xl border border-border shadow-xl z-50 animate-in slide-in-from-bottom-10 duration-500`}>
+        <div className={`fixed bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 sm:py-3.5 rounded-2xl sm:rounded-3xl bg-background/80 backdrop-blur-3xl border border-border shadow-2xl z-50 animate-in slide-in-from-bottom-10 duration-500`}>
+            {/* Audio Toggle */}
             <button
                 onClick={onToggleAudio}
                 className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl transition-all duration-300 ${isAudioMuted ? "bg-destructive text-destructive-foreground hover:opacity-90" : "text-foreground bg-muted/30 hover:bg-muted"
@@ -40,6 +53,7 @@ export function CallControls({
                 {isAudioMuted ? <MicOff size={18} className="sm:w-5 sm:h-5" /> : <Mic size={18} className="sm:w-5 sm:h-5" />}
             </button>
 
+            {/* Video Toggle */}
             <button
                 onClick={onToggleVideo}
                 className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl transition-all duration-300 ${isVideoOff ? "bg-destructive text-destructive-foreground hover:opacity-90" : "text-foreground bg-muted/30 hover:bg-muted"
@@ -49,6 +63,14 @@ export function CallControls({
                 {isVideoOff ? <VideoOff size={18} className="sm:w-5 sm:h-5" /> : <Video size={18} className="sm:w-5 sm:h-5" />}
             </button>
 
+            {/* Virtual Background */}
+            {onSelectBg && (
+                <VirtualBackgroundSelector currentMode={bgMode} currentUrl={bgUrl} onSelect={onSelectBg} />
+            )}
+
+            <div className="w-px h-8 bg-border hidden sm:block mx-1" />
+
+            {/* Screen Share */}
             <button
                 onClick={onToggleScreenShare}
                 className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl transition-all duration-300 ${isScreenSharing ? "bg-primary text-primary-foreground hover:opacity-90" : "text-foreground bg-muted/30 hover:bg-muted"
@@ -81,6 +103,18 @@ export function CallControls({
             >
                 <Circle size={18} className={`sm:w-5 sm:h-5 ${isRecording ? "fill-current animate-pulse" : ""}`} />
             </button>
+
+            {/* Captions Button */}
+            {onToggleCaptions && (
+                <button
+                    onClick={onToggleCaptions}
+                    className={`p-3 sm:p-3.5 rounded-xl sm:rounded-2xl transition-all duration-300 ${isCaptionsOn ? "bg-primary text-primary-foreground hover:opacity-90" : "text-foreground bg-muted/30 hover:bg-muted"
+                        }`}
+                    title={isCaptionsOn ? "Turn Off Captions" : "Turn On Captions"}
+                >
+                    <Subtitles size={18} className="sm:w-5 sm:h-5" />
+                </button>
+            )}
 
             <button
                 onClick={onEndCall}

@@ -5,15 +5,17 @@ export function proxy(req: NextRequest) {
   const token = req.cookies.get("accessToken");
   const { pathname } = req.nextUrl;
 
-  // Allow public auth routes
-  if (pathname.startsWith("/auth")) {
+  // Allow public routes: landing page + auth
+  if (pathname === "/" || pathname.startsWith("/auth")) {
     return NextResponse.next();
   }
 
   // Allow static files & Next internals
   if (
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon.ico")
+    pathname.startsWith("/favicon.ico") ||
+    pathname.startsWith("/images") ||
+    pathname.startsWith("/backgrounds")
   ) {
     return NextResponse.next();
   }
