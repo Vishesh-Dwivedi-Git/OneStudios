@@ -107,7 +107,13 @@ export const logout = async (req: Request, res: Response) => {
     });
   }
 
-  res.clearCookie("accessToken");
-  res.clearCookie("refreshToken");
+  const IS_PROD = process.env.NODE_ENV === "production";
+  const cookieOpts = {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: IS_PROD ? "none" as const : "lax" as const,
+  };
+  res.clearCookie("accessToken", cookieOpts);
+  res.clearCookie("refreshToken", cookieOpts);
   res.json({ success: true });
 };
