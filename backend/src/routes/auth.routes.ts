@@ -51,4 +51,16 @@ router.get("/ws-token", protect, (req, res) => {
   res.json({ token });
 });
 
+// Cross-origin OAuth token bridge: client sends tokens received via URL fragment,
+// backend sets them as httpOnly cookies for the client domain
+import { setAuthCookies } from "../lib/cookies.js";
+router.post("/set-tokens", (req, res) => {
+  const { accessToken, refreshToken } = req.body;
+  if (!accessToken || !refreshToken) {
+    return res.status(400).json({ message: "Missing tokens" });
+  }
+  setAuthCookies(res, accessToken, refreshToken);
+  res.json({ success: true });
+});
+
 export default router;

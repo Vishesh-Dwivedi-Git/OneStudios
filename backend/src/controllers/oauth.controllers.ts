@@ -20,5 +20,8 @@ export const oauthSuccess = async (req: Request, res: Response) => {
 
   setAuthCookies(res, accessToken, refreshToken);
 
-  res.redirect(process.env.CLIENT_URL || "http://localhost:3000");
+  // Pass tokens in URL fragment (#) so the client can store them
+  // Fragments are NOT sent to the server, keeping them secure
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+  res.redirect(`${clientUrl}/auth/callback#access=${accessToken}&refresh=${refreshToken}`);
 };
