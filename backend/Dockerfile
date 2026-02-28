@@ -1,16 +1,17 @@
 # ─── OneStudios Backend ──────────────────────────────────
 # Multi-stage build for smaller final image
-# mediasoup requires native C++ compilation (needs python3, make, g++)
+# mediasoup requires native C++ compilation
 
 # ── Stage 1: Build ──
-FROM node:22-bullseye-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
-# Install build tools for mediasoup native deps
+# Install ALL build tools mediasoup needs (including pip for invoke)
 RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+  python3 \
+  python3-pip \
+  make \
+  g++ \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -22,19 +23,12 @@ RUN npm ci
 COPY prisma ./prisma/
 RUN npx prisma generate
 
-# Copy source code
+# Copy source code and build
 COPY . .
-
-# Build TypeScript
 RUN npx tsc
 
 # ── Stage 2: Production ──
-FROM node:22-bullseye-slim AS runner
-
-# mediasoup workers need these at runtime
-RUN apt-get update && apt-get install -y \
-    python3 \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
 
@@ -54,5 +48,4 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD node -e "fetch('http://localhost:5000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
-# Run with Node directly (not tsx in production)
 CMD ["node", "dist/index.js"]
