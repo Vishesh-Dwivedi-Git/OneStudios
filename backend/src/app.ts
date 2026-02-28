@@ -12,6 +12,9 @@ import rateLimit from "express-rate-limit";
 
 const app = express();
 
+// Trust reverse proxy (Railway, Nginx, etc.) so rate-limit reads real client IP
+app.set("trust proxy", 1);
+
 // ─── Security Headers ────────────────────────────────────
 // Helmet sets various HTTP headers to help protect the app
 app.use(helmet({
