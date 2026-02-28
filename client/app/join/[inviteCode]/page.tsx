@@ -14,20 +14,19 @@ export default function JoinByInvitePage({ params }: { params: Promise<{ inviteC
         async function join() {
             try {
                 const res = await apiRequest(`/rooms/join/${inviteCode}`, {});
-                const roomId = res.roomId;
-                // Fetch room to determine type
-                const room = await apiRequest(`/rooms/${roomId}`, undefined, "GET");
-                if (room.type === "GROUP") {
-                    router.replace(`/group/${roomId}`);
+                const roomId = res.roomId || res.id;
+                const roomType = res.type;
+                if (roomType === "GROUP") {
+                    window.location.href = `/group/${roomId}`;
                 } else {
-                    router.replace(`/call/${roomId}`);
+                    window.location.href = `/call/${roomId}`;
                 }
             } catch (err: any) {
                 setError(err.message || "Failed to join meeting");
             }
         }
         join();
-    }, [inviteCode, router]);
+    }, [inviteCode]);
 
     if (error) {
         return (

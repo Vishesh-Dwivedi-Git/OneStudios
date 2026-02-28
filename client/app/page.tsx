@@ -6,12 +6,16 @@ import { FeatureCards } from "@/components/feature-cards"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { HowItWorks } from "@/components/sections/how-it-works"
 import { UseCases } from "@/components/sections/use-cases"
+import { apiRequest } from "@/lib/api"
 
 export default function Page() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
 
   useEffect(() => {
-    setIsLoggedIn(document.cookie.includes("accessToken"))
+    // httpOnly cookie can't be read by JS — ask the backend instead
+    apiRequest("/auth/ws-token", undefined, "GET")
+      .then(() => setIsLoggedIn(true))
+      .catch(() => setIsLoggedIn(false))
   }, [])
   return (
     <main>

@@ -222,7 +222,7 @@ export const joinByInviteCode = async (req: Request, res: Response) => {
     });
 
     if (existingParticipant) {
-      return res.json({ message: "Already in this room", roomId: room.id, participant: existingParticipant });
+      return res.json({ message: "Already in this room", roomId: room.id, id: room.id, type: room.type, participant: existingParticipant });
     }
 
     // Only check capacity for genuinely NEW participants
@@ -243,7 +243,7 @@ export const joinByInviteCode = async (req: Request, res: Response) => {
       },
     });
 
-    return res.status(201).json({ roomId: room.id, participant });
+    return res.status(201).json({ roomId: room.id, id: room.id, type: room.type, participant });
   } catch (err) {
     console.error("Failed to join by invite:", err);
     return res.status(500).json({ error: "Failed to join room" });

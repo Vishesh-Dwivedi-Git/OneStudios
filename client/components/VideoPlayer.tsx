@@ -27,7 +27,7 @@ export function VideoPlayer({ stream, label, isLocal = false, isMuted = false, i
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted={isLocal || isMuted}
+                muted={isLocal}
                 className={`w-full h-full ${isScreenShare ? 'object-contain bg-black' : 'object-cover'} transition-transform duration-700 ${isScreenShare ? '' : 'group-hover:scale-[1.02]'} ${isVideoOff ? 'hidden' : ''}`}
             />
 

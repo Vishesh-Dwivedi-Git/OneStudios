@@ -56,6 +56,7 @@ export function Hero() {
         roomId = segs[segs.length - 1]
         if (segs.includes("group")) { window.location.href = `/group/${roomId}`; return }
         if (segs.includes("call")) { window.location.href = `/call/${roomId}`; return }
+        if (segs.includes("join")) { window.location.href = `/join/${roomId}`; return }
       }
     } catch { roomId = code }
 

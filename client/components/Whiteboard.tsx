@@ -241,7 +241,7 @@ export function Whiteboard({ isOpen, onClose, onDraw, onClear, incomingDraw, inc
                         </button>
                     </div>
 
-                    <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-muted transition-all">
+                    <button onClick={onClose} className="text-white/70 hover:text-white hover:bg-red-500/20 p-2 rounded-lg transition-all border border-transparent hover:border-red-500/30" title="Close Whiteboard">
                         <X size={20} />
                     </button>
                 </div>

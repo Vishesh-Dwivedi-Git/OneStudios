@@ -6,7 +6,7 @@ import * as mediasoupClient from "mediasoup-client";
 import { useVirtualBackground, BackgroundMode } from "./use-virtual-background";
 
 // ─── Constants ──────────────────────────────────────────
-const WS_URL = "ws://localhost:5000";
+const WS_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000").replace(/^http/, "ws");
 
 // ─── Types ──────────────────────────────────────────────
 export type GroupCallState = "idle" | "joining" | "connected" | "disconnected" | "error";
@@ -297,8 +297,21 @@ export function useGroupWebRTC(roomId: string) {
 
                 if (isStale()) return;
 
-                // 2. Get camera/mic
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                // 2. Get camera/mic with optimized quality
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280, max: 1920 },
+                        height: { ideal: 720, max: 1080 },
+                        frameRate: { ideal: 30, max: 30 },
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
+                        channelCount: 1,
+                    },
+                });
 
                 if (isStale()) {
                     stream.getTracks().forEach(t => t.stop());

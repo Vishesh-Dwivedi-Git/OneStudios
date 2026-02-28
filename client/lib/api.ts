@@ -1,11 +1,10 @@
-const API_BASE = "http://localhost:5000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 export async function apiRequest(
   endpoint: string,
   data?: any,
   method: "POST" | "GET" = "POST"
-) 
- {
+) {
   const res = await fetch(`${API_BASE}${endpoint}`, {
     method,
     headers: {

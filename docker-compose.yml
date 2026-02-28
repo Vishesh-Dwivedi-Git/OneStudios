@@ -1,0 +1,55 @@
+# ─── OneStudios — Docker Compose ─────────────────────────
+# Run everything with:  docker compose up --build
+#
+# Services:
+#   • client   → Next.js frontend (port 3000)
+#   • backend  → Express + WebSocket + mediasoup (port 5000)
+#
+# Database: Neon PostgreSQL (cloud-hosted, no local DB needed)
+
+services:
+  # ── Backend API + WebSocket + mediasoup SFU ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: onestudios-backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "node", "-e", "fetch('http://localhost:5000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - onestudios
+
+  # ── Frontend (Next.js) ──
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5000
+    container_name: onestudios-client
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - onestudios
+
+networks:
+  onestudios:
+    driver: bridge

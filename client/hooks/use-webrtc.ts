@@ -5,13 +5,29 @@ import { apiRequest } from "@/lib/api";
 import { useVirtualBackground, BackgroundMode } from "./use-virtual-background";
 
 // ─── Constants ──────────────────────────────────────────
-const WS_URL = "ws://localhost:5000";
+const WS_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000").replace(/^http/, "ws");
 
 const ICE_SERVERS: RTCConfiguration = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+        },
+        {
+            urls: "turn:openrelay.metered.ca:443",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+        },
+        {
+            urls: "turn:openrelay.metered.ca:443?transport=tcp",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+        },
     ],
+    iceCandidatePoolSize: 10,
 };
 
 // ─── Types ──────────────────────────────────────────────
@@ -155,7 +171,11 @@ export function useWebRTC(roomId: string) {
 
             // ── DataChannel for P2P recording transfer ──
             // Offerer creates channel, answerer listens for it
-            const dc = newPc.createDataChannel("recording", { ordered: true });
+            const dc = newPc.createDataChannel("recording", {
+                ordered: true,
+                maxRetransmits: 30,
+            });
+            dc.bufferedAmountLowThreshold = 256 * 1024;
             dc.onopen = () => { console.log("[DC] recording channel opened (offerer)"); };
             setupDataChannelHandlers(dc);
             dataChannelRef.current = dc;
@@ -343,10 +363,20 @@ export function useWebRTC(roomId: string) {
 
                 if (isStale()) return; // Check after async
 
-                // 2. Get camera/mic
+                // 2. Get camera/mic with optimized quality
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: true,
-                    audio: true,
+                    video: {
+                        width: { ideal: 1280, max: 1920 },
+                        height: { ideal: 720, max: 1080 },
+                        frameRate: { ideal: 30, max: 30 },
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000,
+                        channelCount: 1,
+                    },
                 });
 
                 if (isStale()) {
@@ -627,7 +657,7 @@ export function useWebRTC(roomId: string) {
             return false;
         }
 
-        const CHUNK_SIZE = 64 * 1024; // 64KB
+        const CHUNK_SIZE = 128 * 1024; // 128KB — faster transfers
         const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
 
         // 1. Send metadata
@@ -638,7 +668,7 @@ export function useWebRTC(roomId: string) {
             totalSize: blob.size,
         }));
 
-        // 2. Send binary chunks with flow control
+        // 2. Send binary chunks with event-based flow control
         const arrayBuffer = await blob.arrayBuffer();
         for (let i = 0; i < totalChunks; i++) {
             const start = i * CHUNK_SIZE;
@@ -646,8 +676,12 @@ export function useWebRTC(roomId: string) {
             const chunk = arrayBuffer.slice(start, end);
 
             // Wait if buffered amount is too high (back-pressure)
-            while (dc.bufferedAmount > 1024 * 1024) {
-                await new Promise(r => setTimeout(r, 50));
+            while (dc.bufferedAmount > 512 * 1024) {
+                await new Promise<void>(r => {
+                    dc.onbufferedamountlow = () => { dc.onbufferedamountlow = null; r(); };
+                    // Fallback timeout in case event doesn't fire
+                    setTimeout(r, 100);
+                });
             }
 
             dc.send(chunk);
