@@ -2,13 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function proxy(req: NextRequest) {
-  const token = req.cookies.get("accessToken");
   const { pathname } = req.nextUrl;
-
-  // Allow public routes: landing page + auth
-  if (pathname === "/" || pathname.startsWith("/auth")) {
-    return NextResponse.next();
-  }
 
   // Allow static files & Next internals
   if (
@@ -20,12 +14,10 @@ export function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Protect everything else
-  if (!token) {
-    return NextResponse.redirect(
-      new URL("/auth/login", req.url)
-    );
-  }
+  // In cross-origin deployment (Vercel + Railway), httpOnly cookies
+  // are on the backend domain and invisible to this middleware.
+  // Auth protection is handled client-side on each page instead.
+  return NextResponse.next();
 }
 
 export const config = {

@@ -54,13 +54,18 @@ export default function DashboardPage() {
             try {
                 const data = await apiRequest("/rooms/stats", undefined, "GET");
                 setStats(data);
-            } catch (e) {
+            } catch (e: any) {
+                // If unauthorized, redirect to login
+                if (e.message?.includes("Unauthorized") || e.message?.includes("No token")) {
+                    router.replace("/auth/login");
+                    return;
+                }
                 console.error("Failed to fetch stats:", e);
             } finally {
                 setLoading(false);
             }
         })();
-    }, []);
+    }, [router]);
 
     const maxActivity = stats ? Math.max(Math.max(...stats.dailyActivity.map(d => d.count)), 4) : 4; // Use at least 4 as denominator so 1-meeting days don't look like 100% height but still visible
 
