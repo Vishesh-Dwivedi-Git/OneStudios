@@ -20,5 +20,5 @@ export const oauthSuccess = async (req: Request, res: Response) => {
 
   setAuthCookies(res, accessToken, refreshToken);
 
-  res.redirect("http://localhost:3000");
+  res.redirect(process.env.CLIENT_URL || "http://localhost:3000");
 };
