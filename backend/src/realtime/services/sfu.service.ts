@@ -1,6 +1,6 @@
 import * as mediasoup from "mediasoup";
 
-// ─── Configuration ──────────────────────────────────────
+// ─── Configuration ──────────────────
 const WORKER_SETTINGS: mediasoup.types.WorkerSettings = {
     logLevel: "warn",
     rtcMinPort: 10000,
@@ -25,7 +25,7 @@ const MEDIA_CODECS: mediasoup.types.RtpCodecCapability[] = [
     },
 ] as any;
 
-// WebRTC transport options
+// WebRTC transport
 const TRANSPORT_OPTIONS = {
     listenInfos: [
         {
@@ -44,7 +44,7 @@ const TRANSPORT_OPTIONS = {
     preferUdp: true,
 };
 
-// ─── Types ──────────────────────────────────────────────
+// ─── Types ─────
 export interface TransportParams {
     id: string;
     iceParameters: any;
@@ -66,7 +66,7 @@ interface PeerTransports {
     consumers: Map<string, mediasoup.types.Consumer>;
 }
 
-// ─── SFU Service ────────────────────────────────────────
+// ─── SFU Service ──
 export class SFUService {
     private worker: mediasoup.types.Worker | null = null;
     private routers: Map<string, mediasoup.types.Router> = new Map();
