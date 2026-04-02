@@ -31,7 +31,11 @@ export const register = async (req: Request, res: Response) => {
   });
 
   setAuthCookies(res, accessToken, refreshToken);
-  res.status(201).json({ success: true });
+  res.status(201).json({
+    success: true,
+    data: { userId: user.id },
+    message: "User registered successfully",
+  });
 };
 
 /* LOGIN */
@@ -39,10 +43,20 @@ export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) return res.status(401).json({ message: "Invalid credentials" });
+  if (!user)
+    return res.status(401).json({
+      success: false,
+      data: null,
+      message: "Invalid credentials",
+    });
 
   const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.status(401).json({ message: "Invalid credentials" });
+  if (!valid)
+    return res.status(401).json({
+      success: false,
+      data: null,
+      message: "Invalid credentials",
+    });
 
   const accessToken = generateAccessToken(user.id);
   const refreshToken = generateRefreshToken(user.id);
@@ -56,13 +70,22 @@ export const login = async (req: Request, res: Response) => {
   });
 
   setAuthCookies(res, accessToken, refreshToken);
-  res.json({ success: true });
+  res.json({
+    success: true,
+    data: { userId: user.id },
+    message: "Login successful",
+  });
 };
 
 /* REFRESH */
 export const refresh = async (req: Request, res: Response) => {
   const token = req.cookies.refreshToken;
-  if (!token) return res.status(401).json({ message: "No refresh token" });
+  if (!token)
+    return res.status(401).json({
+      success: false,
+      data: null,
+      message: "No refresh token",
+    });
 
   const tokenHash = hashToken(token);
 
@@ -71,12 +94,20 @@ export const refresh = async (req: Request, res: Response) => {
   });
 
   if (!stored)
-    return res.status(403).json({ message: "Token revoked" });
+    return res.status(403).json({
+      success: false,
+      data: null,
+      message: "Token revoked",
+    });
 
   try {
     jwt.verify(token, process.env.REFRESH_TOKEN_SECRET!);
   } catch {
-    return res.status(403).json({ message: "Invalid refresh token" });
+    return res.status(403).json({
+      success: false,
+      data: null,
+      message: "Invalid refresh token",
+    });
   }
 
   // rotate
@@ -94,7 +125,11 @@ export const refresh = async (req: Request, res: Response) => {
   });
 
   setAuthCookies(res, newAccessToken, newRefreshToken);
-  res.json({ success: true });
+  res.json({
+    success: true,
+    data: { userId: stored.userId },
+    message: "Token refreshed",
+  });
 };
 
 /* LOGOUT */
@@ -115,5 +150,10 @@ export const logout = async (req: Request, res: Response) => {
   };
   res.clearCookie("accessToken", cookieOpts);
   res.clearCookie("refreshToken", cookieOpts);
-  res.json({ success: true });
+
+  res.json({
+    success: true,
+    data: null,
+    message: "Logged out successfully",
+  });
 };
