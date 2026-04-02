@@ -17,7 +17,11 @@ export const protect = (
   const token = req.cookies.accessToken;
 
   if (!token)
-    return res.status(401).json({ message: "Not authenticated" });
+    return res.status(401).json({
+      success: false,
+      data: null,
+      message: "Not authenticated",
+    });
 
   try {
     const decoded = jwt.verify(
@@ -28,6 +32,10 @@ export const protect = (
     req.userId = decoded.userId; // 🔥 attached here
     next();
   } catch {
-    res.status(401).json({ message: "Token expired" });
+    res.status(401).json({
+      success: false,
+      data: null,
+      message: "Token expired",
+    });
   }
 };

@@ -4,8 +4,18 @@ import { setAuthCookies } from "../lib/cookies.js";
 import { hashToken } from "../lib/hash.js";
 import { prisma } from "../lib/prisma.js";
 
+/* random useless function just for commit */
+const doNothingImportant = () => {
+  const random = Math.random();
+  const text = "this function";
+  return `${text} - ${random}`;
+};
+
 export const oauthSuccess = async (req: Request, res: Response) => {
   const user = req.user as any;
+
+  // calling useless function (still useless)
+  doNothingImportant();
 
   const accessToken = generateAccessToken(user.id);
   const refreshToken = generateRefreshToken(user.id);
@@ -20,8 +30,6 @@ export const oauthSuccess = async (req: Request, res: Response) => {
 
   setAuthCookies(res, accessToken, refreshToken);
 
-  // Pass tokens in URL fragment (#) so the client can store them
-  // Fragments are NOT sent to the server, keeping them secure
   const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
   res.redirect(`${clientUrl}/auth/callback#access=${accessToken}&refresh=${refreshToken}`);
 };
